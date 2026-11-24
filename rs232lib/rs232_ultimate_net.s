@@ -24,7 +24,7 @@
 .import ribuf			; external: 256 byte receive buffer
 .import telnet_iac		; config: 1 = telnet IAC handling wanted
 .import is_ultimate		; runtime: 1 = Ultimate (UCI) detected
-.import iac_setup, iac_get, iac_on
+.import iac_setup, iac_setput, iac_offer, iac_get, iac_on
 
 .export net_funcs
 .export net_detect, net_available
@@ -94,7 +94,10 @@ net_setup:
 	ldy telnet_iac
 	beq :+
 	lda #$80
-:	ldx #<net_getraw
+:	ldx #<net_putraw
+	ldy #>net_putraw
+	jsr iac_setput
+	ldx #<net_getraw
 	ldy #>net_getraw
 	jmp iac_setup
 
@@ -165,9 +168,13 @@ net_poll:
 	jsr net_flush
 	bit net_online
 	bpl @rts
-@read:	lda #READ_MAX
+@read:	lda rtail		; bytes in ribuf; from the pointers, since
+	sec			; callers may move rhead without rfree
+	sbc rhead		; (xmodem's clear_input_buffer)
+	sta net_t
+	lda #READ_MAX
 	sec
-	sbc rfree
+	sbc net_t
 	bcc @rts
 	cmp #READ_MARGIN
 	bcc @rts		; buffer (almost) full: TCP holds the remote back
@@ -267,8 +274,13 @@ net_putxfer:
 	clc
 	rts
 
+; raw put for the IAC filter's replies: queued, no $FF doubling
+net_putraw:
+	bit net_online
+	bpl tx_rts
 ; queue a byte; send the queue when full
 tx_add:
+	sta tx_byte
 	ldx txlen
 	sta txbuf,x
 	inx
@@ -276,8 +288,9 @@ tx_add:
 	cpx #TXBUF_SIZE
 	bne @rts
 	jsr net_flush
-	lda net_a
-@rts:	rts
+	lda tx_byte
+@rts:
+tx_rts:	rts
 
 ;----------------------------------------------------------------------
 ; send the queue
@@ -362,6 +375,7 @@ net_open:
 	sta txlen
 	lda #$80
 	sta net_online
+	jsr iac_offer		; telnet: ask for binary mode
 	ldx #txt_connect-txt
 	jmp emit
 @fail:	ldx #txt_nocarrier-txt
@@ -673,10 +687,11 @@ emit:
 
 ; A: byte; dropped if the buffer is full
 emit_byte:
-	ldy rfree
-	cpy #$ff
-	beq :+
 	ldy rtail
+	iny
+	cpy rhead
+	beq :+			; full
+	dey
 	sta ribuf,y
 	inc rtail
 	inc rfree
@@ -701,6 +716,8 @@ net_tick:	.byte 1	; bytes until the connection is serviced
 net_sock:	.byte 0
 net_port:	.word 0
 net_a:		.byte 0
+net_t:		.byte 0
+tx_byte:	.byte 0
 txlen:		.byte 0
 cmdlen:		.byte 0
 at_echo:	.byte $80	; bit 7: echo commands

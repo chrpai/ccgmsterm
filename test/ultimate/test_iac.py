@@ -19,6 +19,7 @@ def run_get(stream, iac):
     mem[0x029d]=len(stream)  # rfree
     mem[sym['iac_on']]=0x80 if iac else 0
     mem[sym['iac_state']]=0
+    mem[0xde01]=0x30   # ACIA ready, for negotiation replies
     out=[]
     for _ in range(len(stream)+2):
         m.sp=0xfd; m.memory[0x1ff]=0xff; m.memory[0x1fe]=0xfe  # return to $ffff

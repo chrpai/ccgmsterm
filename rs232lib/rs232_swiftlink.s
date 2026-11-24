@@ -13,11 +13,12 @@
 .import rs232_rti
 .import telnet_iac		; config: 1 = telnet IAC handling wanted
 .import is_ultimate		; runtime: 1 = Ultimate (UCI) detected
-.import iac_setup, iac_get, iac_on	; shared telnet IAC filter
+.import iac_setup, iac_setput, iac_get, iac_on	; shared telnet IAC filter
 
 ; function table for dispatcher
 .export sw_funcs
 .export sw_getraw		; default raw get of the IAC filter
+.export sw_put1			; default raw put of the IAC filter
 
 stopsw	= 1
 startsw	= 0
@@ -140,7 +141,10 @@ sw_setup:
 	ldy is_ultimate
 	beq :+
 	lda #$80
-:	ldx #<sw_getraw
+:	ldx #<sw_put1
+	ldy #>sw_put1
+	jsr iac_setput
+	ldx #<sw_getraw
 	ldy #>sw_getraw
 	jsr iac_setup
 	pla

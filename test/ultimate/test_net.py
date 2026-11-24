@@ -218,11 +218,36 @@ get_all(m)
 check('long send is split at 128', list(net.sent) == list(range(200)) and net.writes == [128, 72], net.writes)
 
 net, m = online(telnet_iac=1)
+offer = b"\xff\xfb\x00\xff\xfd\x00\xff\xfb\x03\xff\xfd\x03"
+check('telnet: binary and SGA offered on connect', bytes(net.sent) == offer, bytes(net.sent).hex())
+net.sent = []
+# server: DO BINARY (already on), DO TTYPE, WILL ECHO, DONT SGA, WILL NAWS, then data
+net.remote = list(b"\xff\xfd\x00\xff\xfd\x18\xff\xfb\x01\xff\xfe\x03\xff\xfb\x1fok")
+got = get_all(m)
+want = b"\xff\xfc\x18\xff\xfd\x01\xff\xfc\x03\xff\xfe\x1f"
+check('telnet: options answered like tnproxy', got == b"ok" and bytes(net.sent) == want, bytes(net.sent).hex())
+net.sent = []
+net.remote = list(b"\xff\xfb\x01\xff\xfc\x01\xff\xfc\x01")
+get_all(m)
+check('telnet: no reply when nothing changes', bytes(net.sent) == b"\xff\xfe\x01", bytes(net.sent).hex())
+net, m = online()
+check('no telnet offer with IAC off', net.sent == [])
+net, m = online(telnet_iac=1); net.sent = []
 put(m, b"\xff\x41"); get_all(m)
 check('telnet IAC doubling on send', bytes(net.sent) == b"\xff\xff\x41")
 net, m = online()
 put(m, b"\xff"); get_all(m)
 check('no doubling with IAC off', bytes(net.sent) == b"\xff")
+
+# xmodem's clear_input_buffer moves rhead to rtail without touching rfree
+net, m = online()
+for _ in range(5):
+    net.remote = list(range(200))
+    while m.memory[RTAIL] == m.memory[RHEAD] or net.remote:
+        call(m, 'net_poll')
+    m.memory[RHEAD] = m.memory[RTAIL]     # stale rfree from here on
+net.remote = list(b"still here")
+check('reads go on after rhead is moved without rfree', get_all(m) == b"still here")
 
 # hang up
 net, m = online()
