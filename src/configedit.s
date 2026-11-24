@@ -385,9 +385,9 @@ iac_available:
 
 ; print telnet IAC state on the duplex line
 print_iac:
+	jsr iac_available	; (clobbers A)
 	lda #<txt_iac_na
 	ldy #>txt_iac_na
-	jsr iac_available
 	bcc @print
 	lda #<txt_iac_off
 	ldy #>txt_iac_off
@@ -420,7 +420,7 @@ txt_settings_menu:
 tcol27a	.byte WHITE
 	.byte " ",HILITE,"auto-Dialer/Phonebook",CR,CR
 	.byte " ",HILITE,"baud Rate   -",CR,CR
-	.byte " ",HILITE,"duplex      -        ",HILITE,"iac Escape -",CR,CR
+	.byte " ",HILITE,"duplex      -      ",HILITE,"iac Escape:",CR,CR
 	.byte " ",HILITE,"modem Type  -",CR,CR
 	.byte " ",HILITE,"f"
 tcol27b	.byte " "
@@ -444,11 +444,11 @@ txt_return:
 	.byte SETCSR,22,7,CYAN,"RETURN",CR,0
 
 txt_iac_on:
-	.byte SETCSR,6,35,WHITE,"On ",0
+	.byte SETCSR,6,36,WHITE,"On ",0
 txt_iac_off:
-	.byte SETCSR,6,35,WHITE,"Off",0
+	.byte SETCSR,6,36,WHITE,"Off",0
 txt_iac_na:
-	.byte SETCSR,6,35,WHITE,"N/A",0
+	.byte SETCSR,6,36,WHITE,"N/A",0
 SET_ASCII
 
 ;----------------------------------------------------------------------

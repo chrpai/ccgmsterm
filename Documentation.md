@@ -73,7 +73,7 @@ The RETURN key will exit the buffer menu.
 
         Auto-Dialer/Phonebook
         Baud Rate   - 2400
-        Duplex      - Full    IAC Escape - N/A
+        Duplex      - Full IAC Escape: N/A
         Modem Type  - User Port 300-2400
         Firmware    - Standard
         Protocol    - XMODEM
