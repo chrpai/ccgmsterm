@@ -3,45 +3,102 @@ name: Build
 on:
   push:
   pull_request:
-  workflow_dispatch: :
+  workflow_dispatch:
   release:
     types: [published]
-  check_suite:
-    types: [rerequested]
+
+# Cancel superseded runs on the same branch/PR (never cancel release runs).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'release' }}
+
+permissions:
+  contents: read
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    name: Build (${{ matrix.variant }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: standard
+            easyflash: 0
+            output: ccgms.prg
+          - variant: easyflash
+            easyflash: 1
+            output: ccgms-easyflash.prg
 
     steps:
-    - uses: actions/checkout@v2
-      with:
-        submodules: true
+      - name: Check out (with exomizer submodule)
+        uses: actions/checkout@v7
+        with:
+          submodules: true
 
-    - name: install deps
-      run: sudo apt install cc65
+      - name: Install cc65
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends cc65
+          ca65 --version
 
-    - name: build CCGMS
-      run: |
-        make -j$(nproc) EXOMIZER=1
-        cp build/ccgmsterm-exo.prg ccgms.prg
+      # The Makefile only builds exomizer when build/bin/exomizer is missing,
+      # so restoring it skips the slowest part of the build.
+      - name: Get exomizer submodule revision
+        id: exo
+        run: echo "sha=$(git rev-parse HEAD:exomizer)" >> "$GITHUB_OUTPUT"
 
-    - name: build CCGMS (EASYFLASH version)
-      run: |
-        make -j$(nproc) EASYFLASH=1 EXOMIZER=1
-        cp build/ccgmsterm-exo.prg ccgms-easyflash.prg
+      - name: Cache exomizer binary
+        uses: actions/cache@v6
+        with:
+          path: build/bin/exomizer
+          key: exomizer-${{ runner.os }}-${{ runner.arch }}-${{ steps.exo.outputs.sha }}
 
-    - uses: actions/upload-artifact@v2
-      with:
-        name: artifacts
-        path: |
-          *.prg
+      - name: Build CCGMS (${{ matrix.variant }})
+        run: make -j"$(nproc)" EXOMIZER=1 EASYFLASH=${{ matrix.easyflash }}
 
-    - name: Create release
-      if: startsWith(github.ref, 'refs/tags/')
-      uses: softprops/action-gh-release@v1
-      with:
-        files: |
-          *.prg
-        fail_on_unmatched_files: true
-        body: "Automatically created release"
+      - name: Collect outputs
+        run: |
+          mkdir -p dist
+          cp build/ccgmsterm-exo.prg "dist/${{ matrix.output }}"
+          {
+            echo "### ${{ matrix.variant }}"
+            echo '| file | bytes |'
+            echo '|---|---|'
+            echo "| ${{ matrix.output }} (exomized) | $(stat -c%s build/ccgmsterm-exo.prg) |"
+            echo "| ccgmsterm.prg (uncompressed) | $(stat -c%s build/ccgmsterm.prg) |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: ccgms-${{ matrix.variant }}
+          path: |
+            dist/${{ matrix.output }}
+            build/ccgmsterm.map
+            build/ccgmsterm.sym
+          if-no-files-found: error
+
+  release:
+    name: Attach to release
+    if: github.event_name == 'release'
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@v8
+        with:
+          pattern: ccgms-*
+          merge-multiple: false
+          path: artifacts
+
+      - name: Upload .prg files to the release
+        uses: softprops/action-gh-release@v3
+        with:
+          files: artifacts/*/dist/*.prg
+          fail_on_unmatched_files: true
