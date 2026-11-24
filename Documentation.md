@@ -73,7 +73,7 @@ The RETURN key will exit the buffer menu.
 
         Auto-Dialer/Phonebook
         Baud Rate   - 2400
-        Duplex      - Full        Telnet IAC - N/A
+        Duplex      - Full    IAC Escape - N/A
         Modem Type  - User Port 300-2400
         Firmware    - Standard
         Protocol    - XMODEM
@@ -149,7 +149,7 @@ Cycles through the RS-232 drivers:
 
 This configures the syntax used by the auto-dialer. The ZiModem firmware requires the address after `ATDT` in quotes, standard firmwares (WiModem, StrikeLink, ...) do not accept quotes.
 
-### Telnet IAC
+### IAC Escape
 
 Only available on an Ultimate (1541 Ultimate-II/II+, Ultimate 64, C64 Ultimate) with a SwiftLink [modem type](#modem-type); otherwise it shows `N/A`. The Ultimate is detected at startup through the Ultimate Command Interface, which has to be enabled in the Ultimate menu ("Command Interface").
 

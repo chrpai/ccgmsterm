@@ -166,7 +166,7 @@ f7chgk
 	jmp config_loop
 @no7:
 
-; I: telnet IAC (Ultimate + SwiftLink only)
+; I: IAC escape (telnet; Ultimate + SwiftLink only)
 	cmp #'I'
 	bne @no13
 	jsr iac_available
@@ -420,7 +420,7 @@ txt_settings_menu:
 tcol27a	.byte WHITE
 	.byte " ",HILITE,"auto-Dialer/Phonebook",CR,CR
 	.byte " ",HILITE,"baud Rate   -",CR,CR
-	.byte " ",HILITE,"duplex      -        telnet ",HILITE,"iac -",CR,CR
+	.byte " ",HILITE,"duplex      -        ",HILITE,"iac Escape -",CR,CR
 	.byte " ",HILITE,"modem Type  -",CR,CR
 	.byte " ",HILITE,"f"
 tcol27b	.byte " "
