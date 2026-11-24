@@ -11,7 +11,8 @@
 ; and the phonebook work unchanged:
 ;   ATD[T|P]["]host[:port]	connect (port defaults to 23);
 ;				answers CONNECT or NO CARRIER
-;   ATI				ULTIMATENET, then LINK UP or LINK DOWN
+;   ATI				ULTIMATE-NET MODEM EMULATOR, MADE BY CHRIS PAINTER,
+;				then LINK UP or LINK DOWN
 ;   ATE0 / ATE1			command echo off/on
 ;   ATH, ATZ, AT...		OK
 ; While connected, all bytes go to the socket. Hang up (drop DTR) closes
@@ -559,7 +560,7 @@ at_upper:
 @rts:	rts
 
 ;----------------------------------------------------------------------
-; ATI: ULTIMATENET, then whether a network interface has an address
+; ATI: identification, then whether a network interface has an address
 at_ident:
 	ldx #txt_ident-txt
 	jsr emit
@@ -731,7 +732,8 @@ txt_connect:
 txt_nocarrier:
 	.byte CR,LF,"NO CARRIER",CR,LF,0
 txt_ident:
-	.byte CR,LF,"ULTIMATENET",CR,LF,0
+	.byte CR,LF,"ULTIMATE-NET MODEM EMULATOR",CR,LF
+	.byte "MADE BY CHRIS PAINTER",CR,LF,0
 txt_linkup:
 	.byte "LINK UP",CR,LF,0
 txt_linkdown:
