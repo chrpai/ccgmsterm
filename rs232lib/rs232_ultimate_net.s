@@ -168,7 +168,12 @@ net_getraw:
 	dec rfree
 	clc
 	rts
-@none:	sec
+@none:
+.ifdef NET_STATS
+	ldx #st_none-st
+	jsr st_inc
+.endif
+	sec
 	rts
 
 ;----------------------------------------------------------------------
@@ -182,7 +187,14 @@ net_poll:
 	lda UCI_STATUS
 	and #UCI_ST_STATE
 	cmp #UCI_ST_BUSY
+.ifdef NET_STATS
+	bne :+
+	ldx #st_busy-st
+	jmp st_inc
+:
+.else
 	beq @rts		; read still running
+.endif
 	jsr net_collect
 	bit net_online
 	bpl @rts
@@ -254,6 +266,9 @@ net_collect:
 	inx
 	bne @data
 @end:	sty rtail
+.ifdef NET_STATS
+	jsr st_read
+.endif
 	txa
 	clc
 	adc rfree
@@ -369,7 +384,105 @@ net_lost:
 	sta UCI_CMD
 	jsr uci_exec		; (a socket the host closed is gone already)
 	ldx #txt_nocarrier-txt
+.ifdef NET_STATS
+	jsr emit
+	jmp st_show
+.else
 	jmp emit
+.endif
+
+.ifdef NET_STATS
+;----------------------------------------------------------------------
+; debug counters, shown after NO CARRIER and then cleared:
+; R reads with data, E empty reads, B bytes, W polls that found the
+; read still running, N gets that returned no data (all 24 bit hex)
+st_read:			; X: bytes this read; keeps X and Y
+	txa
+	pha
+	bne :+
+	ldx #st_empty-st
+	jsr st_inc
+	pla
+	tax
+	rts
+:	ldx #st_reads-st
+	jsr st_inc
+	pla
+	pha
+	clc
+	adc st_bytes
+	sta st_bytes
+	bcc :+
+	inc st_bytes+1
+	bne :+
+	inc st_bytes+2
+:	pla
+	tax
+	rts
+
+st_inc:				; X: offset of a counter in st
+	inc st,x
+	bne :+
+	inc st+1,x
+	bne :+
+	inc st+2,x
+:	rts
+
+st_show:
+	ldx #0
+@one:	lda st_lbl,x
+	jsr emit_byte
+	lda #'='
+	jsr emit_byte
+	stx net_t
+	txa
+	asl
+	adc net_t		; X*3
+	tax
+	lda st+2,x
+	jsr st_hex
+	lda st+1,x
+	jsr st_hex
+	lda st,x
+	jsr st_hex
+	lda #0
+	sta st,x
+	sta st+1,x
+	sta st+2,x
+	lda #' '
+	jsr emit_byte
+	ldx net_t
+	inx
+	cpx #5
+	bne @one
+	lda #CR
+	jsr emit_byte
+	lda #LF
+	jmp emit_byte
+
+st_hex:
+	pha
+	lsr
+	lsr
+	lsr
+	lsr
+	jsr @nib
+	pla
+	and #$0f
+@nib:	cmp #10
+	bcc :+
+	adc #'A'-'0'-11
+:	adc #'0'
+	jmp emit_byte
+
+st_lbl:	.byte "REBWN"
+st:
+st_reads:	.res 3
+st_empty:	.res 3
+st_bytes:	.res 3
+st_busy:	.res 3
+st_none:	.res 3
+.endif
 
 ;----------------------------------------------------------------------
 ; open the connection to hostbuf:net_port
