@@ -139,6 +139,18 @@ accept_loop:
 	lda stat
 	bne @nodata	; nothing received
 
+	; Ultimate Net delivers a network packet at once, so a code can be
+	; followed by more bytes with no pause in between. There, a code
+	; that matched counts even if more bytes follow.
+	lda modem_type
+	cmp #MODEM_TYPE_ULTIMATE_NET
+	bne :+
+	lda timer1
+	and timer1+1
+	cmp #$ff	; timer -1: a code matched
+	beq @end
+:
+
 	; shift 3 char window, add new char
 	lda codebuf+1
 	sta codebuf
