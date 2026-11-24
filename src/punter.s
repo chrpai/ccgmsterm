@@ -46,14 +46,16 @@ dmark		= codebuf+$20	; jiffy clock when a delay began
 buffer		= $0400      	; buffer for block
 
 ; The original loops counted polls and CPU cycles, so on an accelerated
-; CPU (Ultimate at 16/64 MHz, SuperCPU) the timeouts and handshake
-; delays shrank to a few milliseconds. The timeouts now use the jiffy
-; clock and match the 1 MHz durations, and the delays never drop below
-; what they were at 4 MHz, the fastest speed known to work.
+; CPU (Ultimate at 16/64 MHz, SuperCPU) the timeouts shrank to a few
+; milliseconds and blocks were cut short. The timeouts now use the
+; jiffy clock and match the 1 MHz durations. The handshake delays (a
+; CCGMS addition, not in the original Punter) still count cycles: a
+; faster CPU answers sooner, which BBSes handle fine. DELAY_MIN can
+; give them a floor in jiffies.
 ACCEPT_TIMEOUT	= 36	; jiffies with no code before accept gives up
 RECV_TIMEOUT	= 30	; jiffies between block chars before recmodem gives up
 .ifndef DELAY_MIN
-DELAY_MIN	= 6	; jiffies a handshake delay lasts at least
+DELAY_MIN	= 0	; jiffies a handshake delay lasts at least
 .endif
 
 ; PUNTER_STATS=1: count where a download spends its time, and print it
@@ -1006,7 +1008,7 @@ dodelay:
 ;	bne dod3
 	nop
 
-; ~1/3 s at 1 MHz, and at least DELAY_MIN jiffies on a faster CPU.
+; ~1/3 s at 1 MHz, shorter on a faster CPU, at least DELAY_MIN jiffies.
 ; Clobbers A, X, Y.
 dodelay2:
 	lda JIFFIES
