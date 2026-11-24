@@ -162,7 +162,19 @@ net_detect:
 net_getraw:
 	ldx rhead
 	cpx rtail
+.ifdef NET_STATS
+	bne :+
+	ldx st_pos		; ribuf empty: counter text waiting?
+	cpx st_len
+	bcs @poll
+	lda st_text,x
+	inc st_pos
+	clc
+	rts
+:
+.else
 	beq @poll
+.endif
 	dec net_tick
 	bne @have
 @poll:	bit net_off		; a get means the caller wants data:
@@ -577,11 +589,14 @@ st_show:
 	sbc st_t0+2
 	sta st_time+2
 	cli
+	lda #0
+	sta st_len
+	sta st_pos
 	ldx #0
 @one:	lda st_lbl,x
-	jsr emit_byte
+	jsr st_put
 	lda #'='
-	jsr emit_byte
+	jsr st_put
 	stx net_t
 	txa
 	asl
@@ -598,15 +613,29 @@ st_show:
 	sta st+1,x
 	sta st+2,x
 	lda #' '
-	jsr emit_byte
+	jsr st_put
 	ldx net_t
 	inx
-	cpx #10
+	cpx #5
+	bne :+
+	lda #CR			; two lines, so each fits the screen
+	jsr st_put
+:	cpx #10
 	bne @one
 	lda #CR
-	jsr emit_byte
+	jsr st_put
 	lda #LF
-	jmp emit_byte
+	jmp st_put
+
+; append A to the counter text, which the get serves once ribuf is
+; empty (ribuf may not have room left for it)
+st_put:
+	ldy st_len
+	cpy #ST_TEXT_SIZE
+	bcs :+
+	sta st_text,y
+	inc st_len
+:	rts
 
 st_hex:
 	pha
@@ -621,7 +650,7 @@ st_hex:
 	bcc :+
 	adc #'A'-'0'-11
 :	adc #'0'
-	jmp emit_byte
+	jmp st_put
 
 st_lbl:	.byte "REBWNTOFHS"
 st:
@@ -637,6 +666,10 @@ st_hcnt:	.res 3
 st_short:	.res 3
 st_end:
 st_t0:		.res 3
+ST_TEXT_SIZE	= 128
+st_text:	.res ST_TEXT_SIZE
+st_len:		.byte 0
+st_pos:		.byte 0
 .endif
 
 ;----------------------------------------------------------------------
