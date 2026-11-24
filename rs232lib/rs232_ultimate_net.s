@@ -207,8 +207,9 @@ net_getraw:
 ; send what is queued, and start the next read.
 net_poll:
 	bit net_online
-	bpl @rts
-	lda net_pend
+	bmi :+
+	rts
+:	lda net_pend
 	beq @idle
 	lda UCI_STATUS
 	and #UCI_ST_STATE
