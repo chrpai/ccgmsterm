@@ -206,6 +206,20 @@ net, m = online(telnet_iac=1)
 net.remote = [0x41, 0xff, 0xfb, 0x01, 0xff, 0xff, 0x42]
 check('telnet IAC filter on receive', get_all(m) == b"A\xffB")
 
+# disable (before disk access): the UCI is left idle until enable
+net, m = online(busy=200)
+call(m, 'iac_get')                          # a read is now running
+put(m, b"NAK")
+call(m, 'net_disable')
+idle = net.state == 0 and m.memory[sym['net_pend']] == 0
+check('disable sends the queue and finishes the read', idle and bytes(net.sent) == b"NAK", (net.state, bytes(net.sent)))
+n = len(net.reads)
+net.remote = list(b"block")
+get_all(m)
+check('no reads while disabled', len(net.reads) == n and net.state == 0)
+call(m, 'net_enable')
+check('reads go on after enable', get_all(m, polls=400) == b"block")
+
 # online: send
 net, m = online()
 put(m, b"hello")

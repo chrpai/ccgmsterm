@@ -73,8 +73,8 @@ READ_MAX	= 255-READ_MARGIN
 ;----------------------------------------------------------------------
 net_funcs:
 	.word net_setup
-	.word net_rts		; enable
-	.word net_rts		; disable
+	.word net_enable
+	.word net_disable
 	.word iac_get
 	.word net_putxfer
 	.word net_dropdtr
@@ -84,6 +84,8 @@ net_funcs:
 ; The connection is kept: the dialer and the F7 menu init the driver
 ; again while it may be online.
 net_setup:
+	lda #0
+	sta net_off
 	sei
 	lda #<KERNAL_NMI	; no NMIs from us; drop the SwiftLink handler
 	sta NMINV
@@ -102,6 +104,27 @@ net_setup:
 	jmp iac_setup
 
 net_rts:
+	rts
+
+;----------------------------------------------------------------------
+; Disable: CCGMS calls this before disk access and other work that
+; doesn't poll the modem. Send what is queued, pick up a running read
+; and start no new one, so the UCI is idle while other code (a KERNAL
+; or DOS that talks to the Ultimate, for example) may use it.
+net_disable:
+	lda #$80
+	sta net_off
+	bit net_online
+	bpl net_rts
+	lda txlen
+	beq :+
+	jmp net_flush		; (waits for a running read first)
+:	jmp net_wait_read
+
+; Enable: reads start again on the next poll
+net_enable:
+	lda #0
+	sta net_off
 	rts
 
 ;----------------------------------------------------------------------
@@ -168,7 +191,9 @@ net_poll:
 	jsr net_flush
 	bit net_online
 	bpl @rts
-@read:	lda rtail		; bytes in ribuf; from the pointers, since
+@read:	bit net_off
+	bmi @rts		; disabled: start no read
+	lda rtail		; bytes in ribuf; from the pointers, since
 	sec			; callers may move rhead without rfree
 	sbc rhead		; (xmodem's clear_input_buffer)
 	sta net_t
@@ -712,6 +737,7 @@ txt_ident:
 net_available:	.byte 0	; 1: the UCI network target answered
 net_online:	.byte 0	; bit 7: connected
 net_pend:	.byte 0	; 1: a READ is running
+net_off:	.byte 0	; bit 7: disabled, no reads
 net_tick:	.byte 1	; bytes until the connection is serviced
 net_sock:	.byte 0
 net_port:	.word 0
