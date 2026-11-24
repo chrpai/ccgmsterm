@@ -41,7 +41,18 @@ filetype	= codebuf+$1b	; file type (from basic)
 stack		= codebuf+$1c	; stack pointer at entry
 dontdash	= codebuf+$1d	; flag to suppress dashes and colons
 specmode	= codebuf+$1e	; flag to send special start code
+tmark		= codebuf+$1f	; jiffy clock when the wait for a char began
+dmark		= codebuf+$20	; jiffy clock when a delay began
 buffer		= $0400      	; buffer for block
+
+; The original loops counted polls and CPU cycles, so on an accelerated
+; CPU (Ultimate at 16/64 MHz, SuperCPU) the timeouts and handshake
+; delays shrank to a few milliseconds. The timeouts now use the jiffy
+; clock and match the 1 MHz durations, and the delays never drop below
+; what they were at 4 MHz, the fastest speed known to work.
+ACCEPT_TIMEOUT	= 36	; jiffies with no code before accept gives up
+RECV_TIMEOUT	= 30	; jiffies between block chars before recmodem gives up
+DELAY_MIN	= 6	; jiffies a handshake delay lasts at least
 
 ;
 ; header offsets
@@ -132,6 +143,8 @@ accept_loop:
 	lda #0
 	sta timer1
 	sta timer1+1
+	lda JIFFIES
+	sta tmark
 
 @loop1:	; get char from modem
 	jsr check_abort
@@ -197,19 +210,16 @@ accept_loop:
 	jmp @loop1	; next char
 
 @nodata:
-	inc timer1
-	bne :+
-	inc timer1+1
-:	lda timer1+1
-	ora timer1
-	beq @end	; timer reached 0 -> match found
+	lda timer1
+	and timer1+1
+	cmp #$ff	; timer -1: a code matched
+	beq @end	; and no char followed it -> match found
 
-	lda timer1	; [XXX does nothing]
-	cmp #7		; [XXX does nothing]
-
-	lda timer1+1
-	cmp #20		; 20*256 = 5120 iterations yet?
-	jcc @loop1	; no, next char
+	lda JIFFIES
+	sec
+	sbc tmark
+	cmp #ACCEPT_TIMEOUT
+	jcc @loop1	; no timeout yet, next char
 
 	lda #1		; timeout
 	sta stat
@@ -491,6 +501,8 @@ recmodem:
 @loop1:	lda #0		; clear timers
 	sta timer1
 	sta timer1+1
+	lda JIFFIES
+	sta tmark
 
 @loop2:	jsr check_abort
 	jsr prs232_get
@@ -531,19 +543,16 @@ recmodem:
 	sta timer1+1
 	jmp @loop2	; see if there is another chr
 
-@nochr:	inc timer1	; inc timer
-	bne :+
-	inc timer1+1
-:	lda timer1
-	ora timer1+1	; timer now at zero
+@nochr:	lda timer1
+	and timer1+1
+	cmp #$ff	; timer -1
 	beq @ack2	; "ACK" found with no following chrs
 
-	lda timer1	; [XXX does nothing]
-	cmp #6		; [XXX does nothing]
-
-	lda timer1+1
-	cmp #16		; time out yet
-	bne @loop2	; no, get next chr
+	lda JIFFIES
+	sec
+	sbc tmark
+	cmp #RECV_TIMEOUT; time out yet
+	bcc @loop2	; no, get next chr
 
 	lda #STAT_NODATA; no characters received at all
 	sta stat
@@ -934,7 +943,11 @@ dodelay:
 ;	bne dod3
 	nop
 
+; ~1/3 s at 1 MHz, and at least DELAY_MIN jiffies on a faster CPU.
+; Clobbers A, X, Y.
 dodelay2:
+	lda JIFFIES
+	sta dmark
 	ldx #0
 @1:	ldy #0
 @2:	iny
@@ -942,6 +955,11 @@ dodelay2:
 	inx
 	;cpx #120
 	bne @1
+@3:	lda JIFFIES
+	sec
+	sbc dmark
+	cmp #DELAY_MIN
+	bcc @3
 dod3	rts
 
 ;----------------------------------------------------------------------
