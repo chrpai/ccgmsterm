@@ -10,6 +10,8 @@ The following table summarizes the included drivers and their supported baud rat
 | UP9600             | ✅  |  ✅  |  ✅  | ✅  | ✅   | ❌   | ❌   |
 | SwiftLink/Turbo232 | ✅  |  ✅  |  ✅  | ✅  | ✅   | ✅   | ✅   |
 
+Ultimate Net (`rs232_ultimate_net.s`) has no baud rate: it uses TCP through the network target of the Ultimate Command Interface, with a small Hayes command emulator (`ATDT host:port`, `ATI`, `ATE0/1`) for dialing.
+
 It uses a 256 byte input buffer and no output buffer.
 
 ## API
@@ -56,6 +58,7 @@ Must be set to the driver/config.
         MODEM_TYPE_SWIFTLINK_DE	= 2
         MODEM_TYPE_SWIFTLINK_DF	= 3
         MODEM_TYPE_SWIFTLINK_D7	= 4
+        MODEM_TYPE_ULTIMATE_NET	= 5
 
 ### `baud_rate`
 
@@ -77,7 +80,11 @@ Must be set to the driver/config.
 
 ### `telnet_iac`, `is_ultimate`
 
-Read by the SwiftLink driver in `rs232_init`. If both are non-zero, the driver sends $FF as $FF $FF and strips telnet commands from the input (telnet IAC handling for the Ultimate's modem emulation).
+Read by the SwiftLink driver in `rs232_init`. If both are non-zero, the driver sends $FF as $FF $FF and strips telnet commands from the input (telnet IAC handling for the Ultimate's modem emulation). The Ultimate Net driver reads `telnet_iac` the same way. The receive filter is shared, in `rs232_iac.s`.
+
+### `net_detect`, `net_available`
+
+Exported by the Ultimate Net driver. Call `net_detect` once at startup, after `is_ultimate` is set; it sets `net_available` to 1 if the UCI network target answers. `rs232_init` falls back to the User Port driver if `MODEM_TYPE_ULTIMATE_NET` is selected without it.
 
 ## `ribuf`
 

@@ -1,0 +1,1118 @@
+; CCGMS Terminal
+;
+; This project is licensed under the BSD 3-Clause License.
+;
+; Ultimate Net driver: TCP through the network stack of the Ultimate
+; (1541 Ultimate-II/II+, Ultimate 64, C64 Ultimate), using the network
+; target of the Ultimate Command Interface (UCI). There is no ACIA and
+; no baud rate; the Ultimate does DNS, TCP and buffering.
+;
+; A small Hayes command emulator stands in for the modem, so the dialer
+; and the phonebook work unchanged:
+;   ATD[T|P]["]host[:port]	connect (port defaults to 23);
+;				answers CONNECT or NO CARRIER
+;   ATI				ULTIMATE-NET MODEM EMULATOR, MADE BY CHRIS PAINTER
+;   ATE0 / ATE1			command echo off/on
+;   ATH, ATZ, AT...		OK
+; While connected, all bytes go to the socket. Hang up (drop DTR) closes
+; it; when the remote side closes, NO CARRIER is sent to the terminal.
+;
+; See the "UCI Network Target" document in the 1541ultimate repository.
+;
+
+.include "rs232_kernal.inc"
+.import ribuf			; external: 256 byte receive buffer
+.import telnet_iac		; config: 1 = telnet IAC handling wanted
+.import is_ultimate		; runtime: 1 = Ultimate (UCI) detected
+.import iac_setup, iac_setput, iac_offer, iac_get, iac_on
+
+.export net_funcs
+.export net_detect, net_available
+
+; UCI registers
+UCI_CONTROL	= $df1c	; write: control
+UCI_STATUS	= $df1c	; read: status
+UCI_CMD		= $df1d	; write: command data
+UCI_RESP	= $df1e	; read: response data
+UCI_STATDATA	= $df1f	; read: status data ("00,OK")
+
+UCI_PUSH_CMD	= %00000001
+UCI_DATA_ACC	= %00000010
+UCI_ABORT	= %00000100
+UCI_CLR_ERR	= %00001000
+
+UCI_ST_DATA_AV	= %10000000
+UCI_ST_STAT_AV	= %01000000
+UCI_ST_STATE	= %00110000	; 00 idle, 01 busy, 10 data last, 11 data more
+UCI_ST_BUSY	= %00010000
+UCI_ST_ERROR	= %00001000
+
+; network target
+NET_TARGET	= $03
+NET_IDENTIFY	= $01
+NET_OPEN_TCP	= $07
+NET_CLOSE	= $09
+NET_READ	= $10
+NET_WRITE	= $11
+
+STKEY		= $91	; $7F while STOP is pressed
+NMINV		= $0318
+KERNAL_NMI	= $fe47
+
+CR		= $0d
+LF		= $0a
+
+TXBUF_SIZE	= 128
+CMDBUF_SIZE	= 64
+RESPBUF_SIZE	= 16
+READ_MARGIN	= 16	; ribuf room kept free for NO CARRIER
+READ_MAX	= 255-READ_MARGIN
+UCI_TIMEOUT	= 10*60	; jiffies a command may take before it is aborted
+T_CMD		= 0	; jif_t0 slots
+T_READ		= 2
+
+.segment "RS232"
+
+;----------------------------------------------------------------------
+net_funcs:
+	.word net_setup
+	.word net_enable
+	.word net_disable
+	.word iac_get
+	.word net_putxfer
+	.word net_dropdtr
+
+;----------------------------------------------------------------------
+; A: modem_type, X: baud_rate, Y: is_pal_system (all unused)
+; The connection is kept: the dialer and the F7 menu init the driver
+; again while it may be online.
+net_setup:
+	lda #0
+	sta net_off
+	sei
+	lda #<KERNAL_NMI	; no NMIs from us; drop the SwiftLink handler
+	sta NMINV
+	lda #>KERNAL_NMI
+	sta NMINV+1
+	cli
+	lda #0
+	ldy telnet_iac
+	beq :+
+	lda #$80
+:	ldx #<net_putraw
+	ldy #>net_putraw
+	jsr iac_setput
+	ldx #<net_getraw
+	ldy #>net_getraw
+	jmp iac_setup
+
+net_rts:
+	rts
+
+;----------------------------------------------------------------------
+; Disable: CCGMS calls this before disk access and other work that
+; doesn't poll the modem. Send what is queued, pick up a running read
+; and start no new one, so the UCI is idle while other code (a KERNAL
+; or DOS that talks to the Ultimate, for example) may use it.
+net_disable:
+	lda #$80
+	sta net_off
+	bit net_online
+	bpl net_rts
+	lda txlen
+	beq :+
+	jmp net_flush		; (waits for a running read first)
+:	jmp net_wait_read
+
+; Enable: reads start again on the next poll
+net_enable:
+	lda #0
+	sta net_off
+	rts
+
+;----------------------------------------------------------------------
+; Detect the UCI network target; sets net_available to 1 if present.
+; Called once at startup, after ultimate_detect.
+net_detect:
+	lda #0
+	sta net_available
+	lda is_ultimate
+	beq @rts
+	jsr uci_begin
+	lda #NET_IDENTIFY
+	jsr uci_exec_cmd
+	bne @rts
+	lda #1
+	sta net_available
+@rts:	rts
+
+;======================================================================
+; receive
+
+;----------------------------------------------------------------------
+; raw get (the IAC filter calls this): C=1 no data, else A = byte
+; The fast path only takes a byte from ribuf; the connection is serviced
+; when ribuf is empty, and every 32 bytes so that typed bytes go out
+; while a BBS keeps the buffer full.
+net_getraw:
+	ldx rhead
+	cpx rtail
+.ifdef NET_STATS
+	bne :+
+	ldx st_pos		; ribuf empty: counter text waiting?
+	cpx st_len
+	bcs @poll
+	lda st_text,x
+	inc st_pos
+	clc
+	rts
+:
+.else
+	beq @poll
+.endif
+	dec net_tick
+	bne @have
+@poll:	bit net_off		; a get means the caller wants data:
+	bpl :+			; reads go on even if nobody called enable
+.ifdef NET_STATS
+	ldx #st_off-st
+	jsr st_inc
+.endif
+	lda #0
+	sta net_off
+:	lda #32
+	sta net_tick
+	jsr net_poll
+	ldx rhead
+	cpx rtail
+	beq @none
+@have:	lda ribuf,x
+	inc rhead
+	dec rfree
+	clc
+	rts
+@none:
+.ifdef NET_STATS
+	bit net_online
+	bpl :+
+	ldx #st_none-st
+	jsr st_inc
+:
+.endif
+	sec
+	rts
+
+;----------------------------------------------------------------------
+; Move the connection along without waiting: pick up a finished read,
+; send what is queued, and start the next read.
+net_poll:
+	bit net_online
+	bmi :+
+	rts
+:	lda net_pend
+	beq @idle
+	lda UCI_STATUS
+	and #UCI_ST_STATE
+	cmp #UCI_ST_BUSY
+	bne @done
+.ifdef NET_STATS
+	ldx #st_busy-st
+	jsr st_inc
+.endif
+	ldx #T_READ		; read still running: for too long?
+	jsr jif_late
+	bcc @rts
+	lda #UCI_ABORT		; the Ultimate didn't answer: give up
+	sta UCI_CONTROL
+	jsr uci_idle
+	lda #0
+	sta net_pend
+	jmp net_lost
+@done:	jsr net_collect
+	bit net_online
+	bpl @rts
+@idle:	lda txlen
+	beq @read
+	jsr net_flush
+	bit net_online
+	bpl @rts
+@read:	bit net_off
+	bmi @rts		; disabled: start no read
+	lda rtail		; bytes in ribuf; from the pointers, since
+	sec			; callers may move rhead without rfree
+	sbc rhead		; (xmodem's clear_input_buffer)
+	sta net_t
+	lda #READ_MAX
+	sec
+	sbc net_t
+	bcc @full
+	cmp #READ_MARGIN
+	bcs :+
+@full:
+.ifdef NET_STATS
+	ldx #st_full-st
+	jsr st_inc
+.endif
+	rts			; buffer (almost) full: TCP holds the remote back
+:
+	pha
+	jsr uci_begin
+	lda #NET_READ
+	sta UCI_CMD
+	lda net_sock
+	sta UCI_CMD
+	pla
+	sta UCI_CMD		; length lo
+	lda #0
+	sta UCI_CMD		; length hi
+	lda #UCI_PUSH_CMD
+	sta UCI_CONTROL
+	lda #1
+	sta net_pend
+	ldx #T_READ
+	jmp jif_mark
+@rts:	rts
+
+;----------------------------------------------------------------------
+; wait for a running read and pick it up
+net_wait_read:
+	lda net_pend
+	beq @rts
+	jsr uci_wait
+	bcs @dead
+	jmp net_collect
+@dead:	lda #0			; the Ultimate didn't answer: give up
+	sta net_pend
+	jmp net_lost
+@rts:	rts
+
+;----------------------------------------------------------------------
+; read finished: copy its payload into ribuf
+; reply: 2 byte count, then data; status 00 = data, 02 = no data,
+; anything else (01 = closed by host) = connection lost
+; The count in the header says how many bytes follow. They are read by
+; that count, waiting for each one, rather than until the data flag drops:
+; the flag may drop for a moment while the Ultimate is still filling the
+; reply, and taking the status then would throw the rest away.
+net_collect:
+	lda #0
+	sta net_pend
+	ldx #0
+	jsr col_wait
+	bcs @stat		; no reply data at all
+	lda UCI_RESP		; count lo
+	sta net_t
+	jsr col_wait
+	bcs @stat
+	lda UCI_RESP		; count hi: $FFFF = no data
+	bne @stat
+.ifdef NET_STATS
+	jsr st_hdr
+.endif
+; the payload fits: the read asked for no more than ribuf has room for
+	ldy rtail
+	cpx net_t
+	beq @end		; count 0
+@data:	jsr col_wait
+	bcs @short
+	lda UCI_RESP
+	sta ribuf,y
+	iny
+	inx
+	cpx net_t
+	bne @data
+	beq @end
+@short:
+.ifdef NET_STATS
+	txa
+	pha
+	ldx #st_short-st
+	jsr st_inc
+	pla
+	tax
+.endif
+@end:	sty rtail
+.ifdef NET_STATS
+	jsr st_read
+.endif
+	txa
+	clc
+	adc rfree
+	sta rfree
+@stat:	jsr uci_finish
+	beq @rts		; 00,OK
+	lda uci_stat
+	cmp #'0'
+	bne @lost
+	lda uci_stat+1
+	cmp #'2'		; 02,NO DATA: errno
+	bne @lost
+; "02,NO DATA: 11" (EAGAIN) is just no data. Another errno, such as 104
+; (connection reset), means the connection is gone: without this check
+; the terminal would stay online after a reset.
+	ldx #1
+:	lda uci_tail,x
+	cmp #'0'
+	bcc @rts		; not a number: no errno given
+	cmp #'9'+1
+	bcs @rts
+	dex
+	bpl :-
+	lda uci_tail
+	cmp #'1'
+	bne @lost
+	lda uci_tail+1
+	cmp #'1'
+	beq @rts
+@lost:	jmp net_lost
+@rts:	rts
+
+; wait for the next reply byte; C=1: none came
+col_wait:
+	lda #0
+	sta net_w
+	lda #32
+	sta net_w+1
+:	bit UCI_STATUS
+	bmi :+
+	dec net_w
+	bne :-
+	dec net_w+1
+	bne :-
+	sec
+	rts
+:	clc
+	rts
+
+;======================================================================
+; send
+
+;----------------------------------------------------------------------
+; put byte; A, X and Y are preserved
+net_putxfer:
+	sta net_a
+	txa
+	pha
+	tya
+	pha
+	lda net_a
+	bit net_online
+	bmi @data
+	jsr at_char
+	jmp @out
+@data:	jsr tx_add
+	cmp #$ff		; telnet: $FF data byte is sent as $FF $FF
+	bne @out
+	bit iac_on
+	bpl @out
+	jsr tx_add
+@out:	pla
+	tay
+	pla
+	tax
+	lda net_a
+	clc
+	rts
+
+; raw put for the IAC filter's replies: queued, no $FF doubling
+net_putraw:
+	bit net_online
+	bpl tx_rts
+; queue a byte; send the queue when full
+tx_add:
+	sta tx_byte
+	ldx txlen
+	sta txbuf,x
+	inx
+	stx txlen
+	cpx #TXBUF_SIZE
+	bne @rts
+	jsr net_flush
+	lda tx_byte
+@rts:
+tx_rts:	rts
+
+;----------------------------------------------------------------------
+; send the queue
+net_flush:
+	jsr net_wait_read
+	bit net_online
+	bpl @drop
+	jsr uci_begin
+	lda #NET_WRITE
+	sta UCI_CMD
+	lda net_sock
+	sta UCI_CMD
+	ldx #0
+:	lda txbuf,x
+	sta UCI_CMD
+	inx
+	cpx txlen
+	bne :-
+	jsr uci_exec
+	beq @drop
+	jsr net_lost
+@drop:	lda #0
+	sta txlen
+	rts
+
+;======================================================================
+; connection
+
+;----------------------------------------------------------------------
+; hang up
+net_dropdtr:
+	bit net_online
+	bpl @rts
+	jsr net_wait_read
+	bit net_online
+	bpl @rts
+	jmp net_lost
+@rts:	rts
+
+;----------------------------------------------------------------------
+; close the socket, back to command mode, and tell the terminal
+net_lost:
+	lda #0
+	sta net_online
+	sta net_pend
+	sta txlen
+	jsr uci_begin
+	lda #NET_CLOSE
+	sta UCI_CMD
+	lda net_sock
+	sta UCI_CMD
+	jsr uci_exec		; (a socket the host closed is gone already)
+	ldx #txt_nocarrier-txt
+.ifdef NET_STATS
+	jsr emit
+	jmp st_show
+.else
+	jmp emit
+.endif
+
+.ifdef NET_STATS
+;----------------------------------------------------------------------
+; debug counters, shown after NO CARRIER and then cleared:
+; R reads with data, E empty reads, B bytes, W polls that found the
+; read still running, N gets that returned no data, T jiffies since
+; CONNECT, O gets that found the driver disabled, F polls that found
+; ribuf too full to read, H bytes the read replies announced, S replies
+; that ended before their count (all 24 bit hex)
+st_read:			; X: bytes this read; keeps X and Y
+	txa
+	pha
+	bne :+
+	ldx #st_empty-st
+	jsr st_inc
+	pla
+	tax
+	rts
+:	ldx #st_reads-st
+	jsr st_inc
+	pla
+	pha
+	clc
+	adc st_bytes
+	sta st_bytes
+	bcc :+
+	inc st_bytes+1
+	bne :+
+	inc st_bytes+2
+:	pla
+	tax
+	rts
+
+st_hdr:				; add the header count net_t to H; keeps X, Y
+	lda net_t
+	clc
+	adc st_hcnt
+	sta st_hcnt
+	bcc :+
+	inc st_hcnt+1
+	bne :+
+	inc st_hcnt+2
+:	rts
+
+st_inc:				; X: offset of a counter in st
+	inc st,x
+	bne :+
+	inc st+1,x
+	bne :+
+	inc st+2,x
+:	rts
+
+st_clear:
+	lda #0
+	ldx #st_end-st-1
+:	sta st,x
+	dex
+	bpl :-
+	sei
+	lda $a2			; jiffy clock at CONNECT
+	sta st_t0
+	lda $a1
+	sta st_t0+1
+	lda $a0
+	sta st_t0+2
+	cli
+	rts
+
+st_show:
+	sei			; T = jiffies since CONNECT
+	lda $a2
+	sec
+	sbc st_t0
+	sta st_time
+	lda $a1
+	sbc st_t0+1
+	sta st_time+1
+	lda $a0
+	sbc st_t0+2
+	sta st_time+2
+	cli
+	lda #0
+	sta st_len
+	sta st_pos
+	ldx #0
+@one:	lda st_lbl,x
+	jsr st_put
+	lda #'='
+	jsr st_put
+	stx net_t
+	txa
+	asl
+	adc net_t		; X*3
+	tax
+	lda st+2,x
+	jsr st_hex
+	lda st+1,x
+	jsr st_hex
+	lda st,x
+	jsr st_hex
+	lda #0
+	sta st,x
+	sta st+1,x
+	sta st+2,x
+	lda #' '
+	jsr st_put
+	ldx net_t
+	inx
+	cpx #5
+	bne :+
+	lda #CR			; two lines, so each fits the screen
+	jsr st_put
+:	cpx #10
+	bne @one
+	lda #CR
+	jsr st_put
+	lda #LF
+	jmp st_put
+
+; append A to the counter text, which the get serves once ribuf is
+; empty (ribuf may not have room left for it)
+st_put:
+	ldy st_len
+	cpy #ST_TEXT_SIZE
+	bcs :+
+	sta st_text,y
+	inc st_len
+:	rts
+
+st_hex:
+	pha
+	lsr
+	lsr
+	lsr
+	lsr
+	jsr @nib
+	pla
+	and #$0f
+@nib:	cmp #10
+	bcc :+
+	adc #'A'-'0'-11
+:	adc #'0'
+	jmp st_put
+
+st_lbl:	.byte "REBWNTOFHS"
+st:
+st_reads:	.res 3
+st_empty:	.res 3
+st_bytes:	.res 3
+st_busy:	.res 3
+st_none:	.res 3
+st_time:	.res 3
+st_off:		.res 3
+st_full:	.res 3
+st_hcnt:	.res 3
+st_short:	.res 3
+st_end:
+st_t0:		.res 3
+ST_TEXT_SIZE	= 128
+st_text:	.res ST_TEXT_SIZE
+st_len:		.byte 0
+st_pos:		.byte 0
+.endif
+
+;----------------------------------------------------------------------
+; open the connection to hostbuf:net_port
+net_open:
+	jsr uci_begin
+	lda #NET_OPEN_TCP
+	sta UCI_CMD
+	lda net_port
+	sta UCI_CMD
+	lda net_port+1
+	sta UCI_CMD
+	ldx #0
+:	lda hostbuf,x
+	sta UCI_CMD
+	beq :+
+	inx
+	bne :-
+:	lda #$80		; DNS and connect can take a while: STOP aborts
+	sta uci_stop
+	jsr uci_exec
+	bne @fail
+	lda resplen
+	beq @fail
+	lda respbuf
+	sta net_sock
+	lda #0
+	sta net_pend
+	sta txlen
+	lda #$80
+	sta net_online
+	jsr iac_offer		; telnet: ask for binary mode
+.ifdef NET_STATS
+	jsr st_clear		; count this connection only
+.endif
+	ldx #txt_connect-txt
+	jmp emit
+@fail:	ldx #txt_nocarrier-txt
+	jmp emit
+
+;======================================================================
+; Hayes command emulation (command mode)
+
+;----------------------------------------------------------------------
+; A: byte from the terminal
+at_char:
+	pha
+	jsr at_upper
+	cmp #CR
+	beq @line
+	cmp #$14		; PETSCII DEL
+	beq @del
+	cmp #$08		; ASCII BS
+	beq @del
+	cmp #' '
+	bcc @nostore		; other control codes (LF etc.)
+	ldx cmdlen
+	cpx #CMDBUF_SIZE-1
+	bcs @nostore
+	sta cmdbuf,x
+	inc cmdlen
+	bne @nostore
+@del:	lda cmdlen
+	beq @nostore
+	dec cmdlen
+@nostore:
+	pla
+	bit at_echo
+	bpl @rts
+	jmp emit_byte
+@rts:	rts
+
+@line:	pla
+	bit at_echo
+	bpl :+
+	jsr emit_byte
+:	ldx cmdlen
+	lda #0
+	sta cmdbuf,x
+	sta cmdlen
+	sta at_info
+	lda cmdbuf
+	cmp #'A'
+	bne @rts		; not a command
+	lda cmdbuf+1
+	cmp #'T'
+	bne @rts
+	ldx #2
+@cmd:	lda cmdbuf,x
+	beq @done
+	inx
+	cmp #'D'
+	beq at_dial
+	cmp #'I'
+	bne :+
+	lda #1
+	sta at_info
+	bne @cmd
+:	cmp #'E'
+	bne @cmd
+	lda cmdbuf,x
+	cmp #'0'
+	beq @e0
+	cmp #'1'
+	bne @cmd
+	lda #$80
+	bne @e1
+@e0:	lda #0
+@e1:	sta at_echo
+	inx
+	bne @cmd
+@done:	lda at_info
+	beq :+
+	jsr at_ident
+:	ldx #txt_ok-txt
+	jmp emit
+
+;----------------------------------------------------------------------
+; ATD: X points behind the "D"
+at_dial:
+; skip one dial modifier (T/P), and the quote ZiModem style dialing adds
+	lda cmdbuf,x
+	cmp #'T'
+	beq @skip
+	cmp #'P'
+	bne @sp
+@skip:	inx
+@sp:	lda cmdbuf,x
+	cmp #'"'
+	beq :+
+	cmp #' '
+	bne @host
+:	inx
+	bne @sp
+; copy the host name, in lower case
+@host:	ldy #0
+@hloop:	lda cmdbuf,x
+	beq @hend
+	cmp #'"'
+	beq @hend
+	cmp #':'
+	beq @hend
+	cmp #'A'
+	bcc :+
+	cmp #'Z'+1
+	bcs :+
+	ora #$20		; to lower case ASCII
+:	sta hostbuf,y
+	iny
+	inx
+	bne @hloop
+@hend:
+; trailing spaces off
+:	dey
+	bmi @nohost
+	lda hostbuf,y
+	cmp #' '
+	beq :-
+	iny
+	lda #0
+	sta hostbuf,y
+; port: digits after ":", default 23
+	lda #23
+	sta net_port
+	lda #0
+	sta net_port+1
+	lda cmdbuf,x
+	cmp #':'
+	bne @open
+	inx
+	lda cmdbuf,x
+	jsr at_digit
+	bcs @open		; no digits: default
+	lda #0
+	sta net_port
+@ploop:	lda cmdbuf,x
+	jsr at_digit
+	bcs @open
+	pha
+	; port = port * 10 + digit
+	lda net_port
+	ldy net_port+1
+	asl net_port
+	rol net_port+1		; *2
+	asl net_port
+	rol net_port+1		; *4
+	clc
+	adc net_port
+	sta net_port
+	tya
+	adc net_port+1
+	sta net_port+1		; *5
+	asl net_port
+	rol net_port+1		; *10
+	pla
+	clc
+	adc net_port
+	sta net_port
+	bcc :+
+	inc net_port+1
+:	inx
+	bne @ploop
+@open:	jmp net_open
+@nohost:
+	ldx #txt_nocarrier-txt
+	jmp emit
+
+; C=0 and A = value if A is a digit
+at_digit:
+	sec
+	sbc #'0'
+	cmp #10
+	rts
+
+; upper case, PETSCII or ASCII
+at_upper:
+	cmp #$c1		; PETSCII shifted letters
+	bcc :+
+	cmp #$db
+	bcs @rts
+	and #$7f
+	rts
+:	cmp #'a'		; ASCII lower case
+	bcc @rts
+	cmp #'z'+1
+	bcs @rts
+	and #$df
+@rts:	rts
+
+;----------------------------------------------------------------------
+; ATI: identification
+at_ident:
+	ldx #txt_ident-txt
+	jmp emit
+
+;======================================================================
+; UCI
+
+;----------------------------------------------------------------------
+; get the interface ready and send the target byte
+; (a read of ours that is still running must have been picked up)
+uci_begin:
+	lda UCI_STATUS
+	and #UCI_ST_ERROR
+	beq :+
+	lda #UCI_CLR_ERR
+	sta UCI_CONTROL
+:	lda UCI_STATUS
+	and #UCI_ST_STATE
+	beq @idle
+	cmp #UCI_ST_BUSY
+	bne @acc
+	jsr uci_wait		; (aborted if it takes too long)
+	jmp :-
+@acc:	lda #UCI_DATA_ACC	; a reply nobody took
+	sta UCI_CONTROL
+	bne :-
+@idle:	lda #NET_TARGET
+	sta UCI_CMD
+	rts
+
+;----------------------------------------------------------------------
+; send command byte A, then as uci_exec
+uci_exec_cmd:
+	sta UCI_CMD
+; push the command, wait for it, keep up to RESPBUF_SIZE reply bytes
+; Z=1: status 00,OK
+uci_exec:
+	lda #UCI_PUSH_CMD
+	sta UCI_CONTROL
+	bit uci_stop
+	bmi @wait
+	jsr uci_wait		; no STOP: a time limit instead
+	bcc @done
+	bcs @fail
+@wait:	lda UCI_STATUS		; dial: may take long, STOP aborts
+	and #UCI_ST_STATE
+	cmp #UCI_ST_BUSY
+	bne @done
+	lda STKEY
+	cmp #$7f
+	bne @wait
+	lda #UCI_ABORT
+	sta UCI_CONTROL
+	jsr uci_idle
+@fail:	lda #0
+	sta uci_stop
+	sta resplen
+	lda #'9'		; not OK
+	sta uci_stat
+	rts
+@done:	lda #0
+	sta uci_stop
+	ldx #0
+@data:	bit UCI_STATUS
+	bpl @end
+	lda UCI_RESP
+	cpx #RESPBUF_SIZE
+	bcs @data
+	sta respbuf,x
+	inx
+	bne @data
+@end:	stx resplen
+	jmp uci_finish
+;----------------------------------------------------------------------
+; Wait while the Ultimate is busy with a command, at most UCI_TIMEOUT.
+; C=1: it took too long and was aborted. Keeps Y.
+uci_wait:
+	ldx #T_CMD
+	jsr jif_mark
+@w:	lda UCI_STATUS
+	and #UCI_ST_STATE
+	cmp #UCI_ST_BUSY
+	bne @ok
+	ldx #T_CMD
+	jsr jif_late
+	bcc @w
+	lda #UCI_ABORT
+	sta UCI_CONTROL
+	jsr uci_idle
+	sec
+	rts
+@ok:	clc
+	rts
+
+; after an abort: wait for idle, with a limit; keeps Y
+uci_idle:
+	tya
+	pha
+	ldx #0
+	ldy #0
+:	lda UCI_STATUS
+	and #UCI_ST_STATE
+	beq :+
+	dex
+	bne :-
+	dey
+	bne :-
+:	pla
+	tay
+	rts
+
+; X: T_CMD or T_READ. Note the jiffy clock.
+jif_mark:
+	php
+	sei
+	lda $a2
+	sta jif_t0,x
+	lda $a1
+	sta jif_t0+1,x
+	plp
+	rts
+
+; X: T_CMD or T_READ. C=1: UCI_TIMEOUT jiffies have passed since jif_mark.
+jif_late:
+	php
+	sei
+	lda $a2
+	sec
+	sbc jif_t0,x
+	sta jif_d
+	lda $a1
+	sbc jif_t0+1,x
+	plp
+	cmp #>UCI_TIMEOUT
+	bne :+
+	lda jif_d
+	cmp #<UCI_TIMEOUT
+:	rts
+
+; read the status, acknowledge; Z=1: status 00,OK
+uci_finish:
+	lda #0
+	sta uci_stat
+	sta uci_stat+1
+	sta uci_tail
+	sta uci_tail+1
+	ldx #0
+@stat:	bit UCI_STATUS
+	bvc @send
+	lda UCI_STATDATA
+	cpx #2
+	bcs :+
+	sta uci_stat,x
+:	pha			; keep the last two characters too
+	lda uci_tail+1
+	sta uci_tail
+	pla
+	sta uci_tail+1
+	inx
+	bne @stat
+@send:	lda #UCI_DATA_ACC
+	sta UCI_CONTROL
+:	lda UCI_STATUS
+	and #UCI_DATA_ACC
+	bne :-
+	lda uci_stat
+	cmp #'0'
+	bne :+
+	lda uci_stat+1
+	cmp #'0'
+:	rts
+
+;======================================================================
+; responses into the receive buffer
+
+; X: offset of a zero-terminated text in txt
+emit:
+	lda txt,x
+	beq @rts
+	jsr emit_byte
+	inx
+	bne emit
+@rts:	rts
+
+; A: byte; dropped if the buffer is full
+emit_byte:
+	ldy rtail
+	iny
+	cpy rhead
+	beq :+			; full
+	dey
+	sta ribuf,y
+	inc rtail
+	inc rfree
+:	rts
+
+txt:
+txt_ok:
+	.byte CR,LF,"OK",CR,LF,0
+txt_connect:
+	.byte CR,LF,"CONNECT",CR,LF,0
+txt_nocarrier:
+	.byte CR,LF,"NO CARRIER",CR,LF,0
+txt_ident:
+	.byte CR,LF,"ULTIMATE-NET MODEM EMULATOR",CR,LF
+	.byte "MADE BY CHRIS PAINTER",CR,LF,0
+
+;----------------------------------------------------------------------
+net_available:	.byte 0	; 1: the UCI network target answered
+net_online:	.byte 0	; bit 7: connected
+net_pend:	.byte 0	; 1: a READ is running
+net_off:	.byte 0	; bit 7: disabled, no reads
+net_tick:	.byte 1	; bytes until the connection is serviced
+net_sock:	.byte 0
+net_port:	.word 0
+net_a:		.byte 0
+net_t:		.byte 0
+net_w:		.byte 0,0
+tx_byte:	.byte 0
+txlen:		.byte 0
+cmdlen:		.byte 0
+at_echo:	.byte $80	; bit 7: echo commands
+at_info:	.byte 0
+uci_stop:	.byte 0	; bit 7: STOP aborts the command
+uci_stat:	.byte 0,0
+uci_tail:	.byte 0,0	; last two characters of the status
+jif_t0:		.word 0,0	; T_CMD, T_READ
+jif_d:		.byte 0
+resplen:	.byte 0
+respbuf:	.res RESPBUF_SIZE
+txbuf:		.res TXBUF_SIZE
+cmdbuf:		.res CMDBUF_SIZE
+hostbuf:	.res CMDBUF_SIZE

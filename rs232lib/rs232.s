@@ -11,9 +11,10 @@
 
 ; settings
 .import modem_type, baud_rate, is_pal_system
+.import net_available
 
 ; drivers
-.import rsuser_funcs, up9600_funcs, sw_funcs
+.import rsuser_funcs, up9600_funcs, sw_funcs, net_funcs
 .export rs232_rti
 
 tmpzp		= $a7	; reused KERNAL RS-232 driver var
@@ -26,12 +27,24 @@ ram_flag	= $f9	; reused KERNAL RS-232 driver var
 rs232_init:
 	jsr setup_ram_irq_nmi
 
-	ldx #MODEM_TYPE_SWIFTLINK_DE
 	lda modem_type
+	cmp #MODEM_TYPE_ULTIMATE_NET
+	bne @notnet
+	lda net_available
+	bne @net
+	lda #MODEM_TYPE_USERPORT	; no Ultimate network here: fall back
+	sta modem_type
+	lda #BAUD_2400
+	sta baud_rate
+	lda #MODEM_TYPE_USERPORT
+	beq @drv
+@net:	lda #3			; index of net_funcs
+	bne @drv
+@notnet:
 	cmp #MODEM_TYPE_SWIFTLINK_DE
-	bcc :+
-	txa
-:	asl
+	bcc @drv
+	lda #2			; all SwiftLink types use sw_funcs
+@drv:	asl
 	tax
 	lda modem_drivers,x
 	sta tmpzp
@@ -77,6 +90,7 @@ modem_drivers:
 	.word rsuser_funcs	; MODEM_TYPE_USERPORT
 	.word up9600_funcs	; MODEM_TYPE_UP9600
 	.word sw_funcs		; MODEM_TYPE_SWIFTLINK_DE, ...
+	.word net_funcs		; MODEM_TYPE_ULTIMATE_NET
 
 ;----------------------------------------------------------------------
 ; Dispatch: Enable

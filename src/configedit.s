@@ -158,7 +158,12 @@ f7chgk
 	bcc @incmod
 	jmp @mod2
 @mod1:	pla
-	cmp #5		; max # of modems
+	ldx net_available
+	beq :+
+	cmp #MODEM_TYPE_ULTIMATE_NET+1	; Ultimate Net only with an Ultimate
+	bcc @incmod
+	bcs @mod2
+:	cmp #MODEM_TYPE_ULTIMATE_NET	; max # of modems
 	bcc @incmod
 @mod2:	lda #0
 	sta modem_type
@@ -256,6 +261,7 @@ op2txt:
 	.byte "Swift / Turbo DE  "
 	.byte "Swift / Turbo DF  "
 	.byte "Swift / Turbo D7  "
+	.byte "Ultimate Net      "
 
 op6txt:
 	.byte "Standard"
@@ -376,7 +382,8 @@ f7parm:
 :	jmp print_iac
 
 ;----------------------------------------------------------------------
-; C=1: running on an Ultimate with a SwiftLink modem type.
+; C=1: running on an Ultimate with a SwiftLink or Ultimate Net modem type
+; (all types from MODEM_TYPE_SWIFTLINK_DE up; baud does not matter for Net).
 ; Gates the telnet IAC option and the 57600 baud setting.
 ultimate_swiftlink:
 	lda is_ultimate

@@ -149,6 +149,14 @@ Cycles through the RS-232 drivers:
 * User Port: This uses is the original Commodore RS-232 specification for modems on the user port. This can be used with classic modems like the Commodore 1670 (Modem/1200), or when connecting any TTL RS-232 device to the user port's RX and TX pins.
 * The [UP9600](https://www.pagetable.com/?p=1656) driver requires an alternate wiring on the user port. It allows higher speeds, and is backwards compatible with the original user port wiring. UP9600 does not work with the C128.
 * SwiftLink/Turbo232: This requires cartridge with an external 6551 ACIA, like SwiftLink, Turbo232 or GLINK232T. The cart has to be configured to use NMI (not IRQ) and to be located at either $DE00 (setting `DE`), $DF00 (`DF`) or $D700 (`D7`).
+* Ultimate Net: Only offered on an Ultimate (1541 Ultimate-II/II+, Ultimate 64, C64 Ultimate) whose Ultimate Command Interface answers for the network target. CCGMS then talks TCP through the Ultimate's own network stack instead of its SwiftLink emulation, so the emulation's speed limit (its "Loop Delay") does not apply, and the baud rate setting is ignored. The driver behaves like a modem:
+	* `ATDT host:port` connects (the port defaults to 23) and answers `CONNECT`, or `NO CARRIER` if the host can't be found or reached. STOP aborts a slow dial. Auto-dialing from the phonebook works as with any modem, with either [firmware](#firmware) setting.
+	* `ATI` answers `ULTIMATE-NET MODEM EMULATOR` and `MADE BY CHRIS PAINTER`.
+	* `ATE0`/`ATE1` turns the command echo off or on; other `AT` commands answer `OK`.
+	* Hanging up (C= STOP) closes the connection. When the BBS hangs up, CCGMS shows `NO CARRIER`.
+	* There is no answer mode: the Ultimate's network interface for programs can't accept incoming connections.
+
+	If a saved configuration selects Ultimate Net and CCGMS runs on a machine without it, CCGMS falls back to User Port at 2400 baud.
 
 ### Firmware
 
@@ -156,9 +164,9 @@ This configures the syntax used by the auto-dialer. The ZiModem firmware require
 
 ### IAC Escape
 
-Only available on an Ultimate (1541 Ultimate-II/II+, Ultimate 64, C64 Ultimate) with a SwiftLink [modem type](#modem-type); otherwise it shows `N/A`. The Ultimate is detected at startup through the Ultimate Command Interface, which has to be enabled in the Ultimate menu ("Command Interface").
+Only available on an Ultimate (1541 Ultimate-II/II+, Ultimate 64, C64 Ultimate) with a SwiftLink or Ultimate Net [modem type](#modem-type); otherwise it shows `N/A`. The Ultimate is detected at startup through the Ultimate Command Interface, which has to be enabled in the Ultimate menu ("Command Interface").
 
-The Ultimate's modem emulation passes data straight to a TCP socket. Telnet BBSes treat $FF as the start of a telnet command (IAC), so a lone $FF gets swallowed. With this option on, CCGMS:
+The Ultimate's modem emulation, like Ultimate Net, passes data straight to a TCP socket. Telnet BBSes treat $FF as the start of a telnet command (IAC), so a lone $FF gets swallowed. With this option on, CCGMS:
 
 * sends every $FF data byte as $FF $FF, and
 * on receive, turns $FF $FF back into one $FF and drops telnet commands (WILL/WONT/DO/DONT, subnegotiation).
