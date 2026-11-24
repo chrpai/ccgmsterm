@@ -112,6 +112,7 @@ start:
 ; [XXX It needs to be called once though ("jsr rsopen" above!) to  ]
 ; [XXX init the RS232 dispatch jump table.                         ]
 rsopen:
+	jsr baud_failsafe	; no 57600 unless Ultimate + SwiftLink
 	jsr rs232_init
 	jsr clall
 	jsr rs232_off

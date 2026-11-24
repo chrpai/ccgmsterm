@@ -127,11 +127,16 @@ This will return to the settings menu.
 
 This will cycle through the legal baud rates for the current [modem type](#modem-type).
 
-| Driver             | 300 | 1200 | 2400 | 4800 | 9600 | 19200 | 3400 |
-|--------------------|-----|------|------|------|------|-------|------|
-| User Port          | ✅  |  ✅  |  ✅  | ❌  | ❌   | ❌   | ❌   |
-| UP9600             | ✅  |  ✅  |  ✅  | ✅  | ✅   | ❌   | ❌   |
-| SwiftLink/Turbo232 | ✅  |  ✅  |  ✅  | ✅  | ✅   | ✅   | ✅   |
+| Driver                  | 300 | 1200 | 2400 | 4800 | 9600 | 19200 | 38400 | 57600 |
+|-------------------------|-----|------|------|------|------|-------|-------|-------|
+| User Port               | ✅  |  ✅  |  ✅  | ❌  | ❌   | ❌   | ❌    | ❌    |
+| UP9600                  | ✅  |  ✅  |  ✅  | ✅  | ✅   | ❌   | ❌    | ❌    |
+| SwiftLink/Turbo232      | ✅  |  ✅  |  ✅  | ✅  | ✅   | ✅   | ✅    | ❌    |
+| SwiftLink on an Ultimate | ✅  |  ✅  |  ✅  | ✅  | ✅   | ✅   | ✅    | ✅    |
+
+57600 is only offered on an Ultimate (detected at startup, see [IAC Escape](#iac-escape)) with a SwiftLink modem type. It sets the 6551 rate bits to `0000`, which a real 6551 treats as an external clock, so a real SwiftLink can't do it. The Ultimate's modem emulation runs at its fastest pace instead. How fast that actually is depends on the Ultimate's modem "Loop Delay" setting: with "10 ms", a C64 Ultimate measured about 51,000 baud.
+
+A config saved with 57600 drops back to 38400 when it's loaded on other hardware or with another modem type.
 
 ### Duplex
 
