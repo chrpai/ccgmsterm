@@ -20,6 +20,7 @@ BAUD_4800	= 3
 BAUD_9600	= 4
 BAUD_19200	= 5
 BAUD_38400	= 6
+BAUD_57600	= 7	; SwiftLink driver on an Ultimate only (see rs232_swiftlink.s)
 
 ; API
 .global rs232_init
