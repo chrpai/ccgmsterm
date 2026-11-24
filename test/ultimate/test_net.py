@@ -29,7 +29,12 @@ class FakeNet:
         self.ip = [192, 168, 1, 64]
         self.hang = False         # commands never finish
         self.aborted = False
+        self.gaps = 0             # make the data flag drop now and then
     def status(self, a):
+        if self.gaps and self.data and self.state == 2:
+            self.gaps -= 1
+            if self.gaps % 3 == 0:     # data flag drops for a moment mid-reply
+                return 0x20 | (0x40 if self.stat else 0)
         if self.state == 1:
             if self.hang:
                 return 0x10
@@ -232,6 +237,13 @@ for stat, lost in ((b"02,NO DATA: 104", True), (b"02,NO DATA: 11", False), (b"02
     ok = out == (b"tail\r\nNO CARRIER\r\n" if lost else b"tail") and bool(m.memory[sym['net_online']] & 0x80) != lost
     check('read status %s %s' % (stat.decode(), 'hangs up' if lost else 'is no data'), ok, out)
 
+# the data flag drops for a moment inside a reply: nothing is lost
+net, m = online()
+net.gaps = 100000
+data = [i & 255 for i in range(600)]
+net.remote = list(data)
+check('data flag gaps lose nothing', list(get_all(m)) == data)
+
 # disable (before disk access): the UCI is left idle until enable
 net, m = online(busy=200)
 call(m, 'iac_get')                          # a read is now running
@@ -241,10 +253,14 @@ idle = net.state == 0 and m.memory[sym['net_pend']] == 0
 check('disable sends the queue and finishes the read', idle and bytes(net.sent) == b"NAK", (net.state, bytes(net.sent)))
 n = len(net.reads)
 net.remote = list(b"block")
-get_all(m)
+call(m, 'net_putxfer', 0x41, 0, 0)          # (no get: e.g. disk access)
 check('no reads while disabled', len(net.reads) == n and net.state == 0)
 call(m, 'net_enable')
-check('reads go on after enable', get_all(m, polls=400) == b"block")
+check('reads go on after enable', get_all(m, polls=400) == b"Ablock"[1:] and bytes(net.sent).endswith(b"A"))
+net, m = online()
+call(m, 'net_disable')
+net.remote = list(b"anyway")
+check('a get reads even without enable', get_all(m, polls=400) == b"anyway")
 
 # online: send
 net, m = online()

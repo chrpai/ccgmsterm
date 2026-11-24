@@ -165,7 +165,15 @@ net_getraw:
 	beq @poll
 	dec net_tick
 	bne @have
-@poll:	lda #32
+@poll:	bit net_off		; a get means the caller wants data:
+	bpl :+			; reads go on even if nobody called enable
+.ifdef NET_STATS
+	ldx #st_off-st
+	jsr st_inc
+.endif
+	lda #0
+	sta net_off
+:	lda #32
 	sta net_tick
 	lda #0
 	sta net_spinlo
@@ -236,9 +244,16 @@ net_poll:
 	lda #READ_MAX
 	sec
 	sbc net_t
-	bcc @rts
+	bcc @full
 	cmp #READ_MARGIN
-	bcc @rts		; buffer (almost) full: TCP holds the remote back
+	bcs :+
+@full:
+.ifdef NET_STATS
+	ldx #st_full-st
+	jsr st_inc
+.endif
+	rts			; buffer (almost) full: TCP holds the remote back
+:
 	pha
 	jsr uci_begin
 	lda #NET_READ
@@ -271,24 +286,47 @@ net_wait_read:
 ; read finished: copy its payload into ribuf
 ; reply: 2 byte count, then data; status 00 = data, 02 = no data,
 ; anything else (01 = closed by host) = connection lost
+; The count in the header says how many bytes follow. They are read by
+; that count, waiting for each one, rather than until the data flag drops:
+; the flag may drop for a moment while the Ultimate is still filling the
+; reply, and taking the status then would throw the rest away.
 net_collect:
 	lda #0
 	sta net_pend
-	ldx #2			; skip the 2 byte count
-@hdr:	bit UCI_STATUS
-	bpl @stat
-	lda UCI_RESP
-	dex
-	bne @hdr
+	ldx #0
+	jsr col_wait
+	bcs @stat		; no reply data at all
+	lda UCI_RESP		; count lo
+	sta net_t
+	jsr col_wait
+	bcs @stat
+	lda UCI_RESP		; count hi: $FFFF = no data
+	bne @stat
+.ifdef NET_STATS
+	jsr st_hdr
+.endif
 ; the payload fits: the read asked for no more than ribuf has room for
 	ldy rtail
-@data:	bit UCI_STATUS
-	bpl @end
+	cpx net_t
+	beq @end		; count 0
+@data:	jsr col_wait
+	bcs @short
 	lda UCI_RESP
 	sta ribuf,y
 	iny
 	inx
+	cpx net_t
 	bne @data
+	beq @end
+@short:
+.ifdef NET_STATS
+	txa
+	pha
+	ldx #st_short-st
+	jsr st_inc
+	pla
+	tax
+.endif
 @end:	sty rtail
 	txa			; streaming? (see net_getraw)
 	beq :+
@@ -333,6 +371,23 @@ net_collect:
 	beq @rts
 @lost:	jmp net_lost
 @rts:	rts
+
+; wait for the next reply byte; C=1: none came
+col_wait:
+	lda #0
+	sta net_w
+	lda #32
+	sta net_w+1
+:	bit UCI_STATUS
+	bmi :+
+	dec net_w
+	bne :-
+	dec net_w+1
+	bne :-
+	sec
+	rts
+:	clc
+	rts
 
 ;======================================================================
 ; send
@@ -447,7 +502,9 @@ net_lost:
 ; debug counters, shown after NO CARRIER and then cleared:
 ; R reads with data, E empty reads, B bytes, W polls that found the
 ; read still running, N gets that returned no data, T jiffies since
-; CONNECT (all 24 bit hex)
+; CONNECT, O gets that found the driver disabled, F polls that found
+; ribuf too full to read, H bytes the read replies announced, S replies
+; that ended before their count (all 24 bit hex)
 st_read:			; X: bytes this read; keeps X and Y
 	txa
 	pha
@@ -471,6 +528,17 @@ st_read:			; X: bytes this read; keeps X and Y
 :	pla
 	tax
 	rts
+
+st_hdr:				; add the header count net_t to H; keeps X, Y
+	lda net_t
+	clc
+	adc st_hcnt
+	sta st_hcnt
+	bcc :+
+	inc st_hcnt+1
+	bne :+
+	inc st_hcnt+2
+:	rts
 
 st_inc:				; X: offset of a counter in st
 	inc st,x
@@ -533,7 +601,7 @@ st_show:
 	jsr emit_byte
 	ldx net_t
 	inx
-	cpx #6
+	cpx #10
 	bne @one
 	lda #CR
 	jsr emit_byte
@@ -555,7 +623,7 @@ st_hex:
 :	adc #'0'
 	jmp emit_byte
 
-st_lbl:	.byte "REBWNT"
+st_lbl:	.byte "REBWNTOFHS"
 st:
 st_reads:	.res 3
 st_empty:	.res 3
@@ -563,6 +631,10 @@ st_bytes:	.res 3
 st_busy:	.res 3
 st_none:	.res 3
 st_time:	.res 3
+st_off:		.res 3
+st_full:	.res 3
+st_hcnt:	.res 3
+st_short:	.res 3
 st_end:
 st_t0:		.res 3
 .endif
@@ -952,6 +1024,7 @@ net_sock:	.byte 0
 net_port:	.word 0
 net_a:		.byte 0
 net_t:		.byte 0
+net_w:		.byte 0,0
 tx_byte:	.byte 0
 txlen:		.byte 0
 cmdlen:		.byte 0
