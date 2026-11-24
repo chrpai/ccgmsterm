@@ -44,6 +44,11 @@ for col80 in ('0', '1'):
                 runs += 1
                 if dumps[0] != dumps[1]:
                     fails += 1
-                    print('DIFFERENT: col80=%s seed=%d mode=%s reu=%s' % (col80, seed, mode, reu))
+                    keep = os.path.join(tmp, 'fail-%s-%d-%s-%s' % (col80, seed, mode, reu))
+                    os.mkdir(keep)
+                    for i, d in enumerate(dumps):
+                        open(os.path.join(keep, 'dump%d.bin' % i), 'wb').write(d)
+                    open(os.path.join(keep, 'stream.bin'), 'wb').write(open(sp, 'rb').read())
+                    print('DIFFERENT: col80=%s seed=%d mode=%s reu=%s (%s)' % (col80, seed, mode, reu, keep))
 print('%d of %d runs differ' % (fails, runs))
 sys.exit(1 if fails else 0)

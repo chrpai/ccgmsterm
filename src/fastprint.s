@@ -212,13 +212,20 @@ fp_rows:
 ;----------------------------------------------------------------------
 ; scroll the 40 column screen up by one row
 fast_scroll:
-	lda reu_enabled	; with an REU, let it move the rows (see below)
+	lda reu_enabled	; with an REU, it may be faster (see below)
 	beq :+
 	lda modem_type
 	cmp #MODEM_TYPE_ULTIMATE_NET
 	bne :+
-	jmp reu_scroll
-:	ldy FP_COLOR	; the KERNAL fills the new row with the text color
+	jsr timed_copy
+	jmp scroll_links
+:	jsr cpu_copy
+	jmp scroll_links
+
+;----------------------------------------------------------------------
+; move rows 1-24 up with the CPU and clear row 24
+cpu_copy:
+	ldy FP_COLOR	; the KERNAL fills the new row with the text color
 	ldx #39
 @loop:
 .repeat 24, row
@@ -234,9 +241,10 @@ fast_scroll:
 	dex
 	bmi :+
 	jmp @loop
-:
+:	rts
 
-	; shift the line link flags up, keeping each row's page bits
+;----------------------------------------------------------------------
+; shift the line link flags up, keeping each row's page bits
 scroll_links:
 	ldx #0
 @link:	lda FP_LDTB1,x
@@ -254,14 +262,70 @@ scroll_links:
 	rts
 
 ;----------------------------------------------------------------------
-; Scroll with REU DMA: rows 1-24 of screen and color RAM go to REU bank 1
-; and come back one row higher, about 1 cycle per byte instead of 10.
-; The CPU stops during each 960 byte transfer, which an NMI driven modem
-; (User Port, SwiftLink) could not take at high speed, so this is only
-; used with Ultimate Net, which the terminal polls. The buffer uses bank 0.
+; Pick the faster of the CPU copy and REU DMA. DMA moves one byte per
+; 1 MHz cycle whatever the CPU speed, so it wins at 1-16 MHz and loses at
+; 64 MHz on an Ultimate. Each copy is timed with CIA 1 timer B (the KERNAL
+; only uses it during serial bus and tape I/O, and sets it up itself), the
+; faster one is used, and every 32nd scroll tries the other one again, so a
+; speed change from the Ultimate menu is picked up.
+FS_PROBE_EVERY = 32
+
+timed_copy:
+	dec fs_probe
+	bne :+
+	lda #FS_PROBE_EVERY
+	sta fs_probe
+	lda fs_best	; try the other one
+	eor #1
+	bpl @set	; always
+:	lda fs_best
+@set:	sta fs_method
+
+	lda #$ff	; timer B counts down from $FFFF at 1 MHz
+	sta $dc06
+	sta $dc07
+	lda #%00010001	; force load, start, continuous, count clock cycles
+	sta $dc0f
+	lda fs_method
+	beq :+
+	jsr reu_copy
+	jmp :++
+:	jsr cpu_copy
+:	lda #0
+	sta $dc0f	; stop the timer (it holds its value)
+	lda $dc06
+	eor #$ff	; elapsed = $FFFF - counter
+	ldx $dc07
+	ldy fs_method	; remember how long this one took
+	sta fs_time_lo,y
+	txa
+	eor #$ff
+	sta fs_time_hi,y
+
+	lda fs_time_lo	; CPU - REU: no borrow means REU <= CPU
+	cmp fs_time_lo+1
+	lda fs_time_hi
+	sbc fs_time_hi+1
+	lda #0
+	rol
+	sta fs_best	; 1: REU
+	rts
+
+fs_probe:	.byte 2		; first scroll: REU, second: CPU, then every 32nd
+fs_best:	.byte 1		; 0: CPU, 1: REU
+fs_method:	.byte 0
+fs_time_lo:	.byte $ff, $ff	; CPU, REU, in 1 MHz cycles
+fs_time_hi:	.byte $ff, $ff
+
+;----------------------------------------------------------------------
+; Copy with REU DMA: rows 1-24 of screen and color RAM go to REU bank 1
+; and come back one row higher. The CPU stops during each 960 byte
+; transfer, which an NMI driven modem (User Port, SwiftLink) could not
+; take at high speed, so this is only used with Ultimate Net, which the
+; terminal polls. The buffer uses bank 0.
 REU_SCRATCH_BANK = 1
 
-reu_scroll:
+reu_copy:
 	lda #0
 	sta $df0a	; both addresses count up
 	sta $df04	; REU $10000
@@ -308,4 +372,4 @@ reu_scroll:
 	sta FP_COLRAM+24*40,x
 	dex
 	bpl :-
-	jmp scroll_links
+	rts

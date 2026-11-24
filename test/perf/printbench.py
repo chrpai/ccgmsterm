@@ -29,10 +29,9 @@ kernal = open(os.path.join(romdir, 'kernal.bin'), 'rb').read()
 basic = open(os.path.join(romdir, 'basic.bin'), 'rb').read()
 
 class C64Mem(bytearray):
-    """RAM with BASIC/KERNAL ROM overlays (per $01) and a ticking $D012."""
+    """RAM with BASIC/KERNAL ROM overlays (per $01) and a raster counter."""
     def __init__(self):
         super().__init__(65536)
-        self.ras = 0
     def __getitem__(self, a):
         if isinstance(a, slice):
             return bytes(self[i] for i in range(*a.indices(65536)))
@@ -41,17 +40,34 @@ class C64Mem(bytearray):
             return kernal[a - 0xe000]
         if 0xa000 <= a < 0xc000 and (p & 3) == 3:
             return basic[a - 0xa000]
-        if a == 0xd012:
-            self.ras = (self.ras + 1) % 312
-            return self.ras & 0xff
-        if a == 0xd011:
-            return 0x1b | (0x80 if self.ras > 255 else 0)
+        if a in (0xd011, 0xd012):    # PAL raster line from the cycle count
+            line = (mpu.processorCycles // 63) % 312
+            if a == 0xd012:
+                return line & 0xff
+            return 0x1b | (0x80 if line > 255 else 0)
         if a == 0xd0bc:
             return 0xff     # no SuperCPU
         if a in (0xdc01,):
             return 0xff     # no key pressed
+        if a in (0xdc06, 0xdc07):   # CIA 1 timer B, counting clock cycles
+            v = self.tb_value()
+            return v & 0xff if a == 0xdc06 else v >> 8
         return bytearray.__getitem__(self, a)
+    tb_hold, tb_start = 0xffff, None
+    def tb_value(self):
+        if self.tb_start is None:
+            return self.tb_hold
+        return (self.tb_hold - (mpu.processorCycles - self.tb_start)) & 0xffff
     def __setitem__(self, a, v):
+        if a == 0xdc0f:
+            if v & 0x10:    # force load from the latch
+                self.tb_hold = bytearray.__getitem__(self, 0xdc06) | bytearray.__getitem__(self, 0xdc07) << 8
+                self.tb_start = None
+            else:
+                self.tb_hold = self.tb_value()
+                self.tb_start = None
+            if v & 1:
+                self.tb_start = mpu.processorCycles
         bytearray.__setitem__(self, a, v)
         if a == 0xdf01 and v & 0x80 and reu is not None:
             reu_dma(v)
@@ -74,7 +90,7 @@ def reu_dma(cmd):
             bytearray.__setitem__(mem, ci, reu[ri])
         else:
             raise NotImplementedError
-    mpu.processorCycles += n
+    mpu.processorCycles += n * int(os.environ.get('DMACOST', '1'))  # >1: a slow REU vs a fast CPU
     if not cmd & 0x20:   # no autoload: registers advance
         c64 = (c64 + n) & 0xffff; ra = (ra + n) & 0x7ffff
         for i, b in enumerate([c64 & 255, c64 >> 8, ra & 255, (ra >> 8) & 255, ra >> 16, 1, 0]):
