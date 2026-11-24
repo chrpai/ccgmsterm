@@ -427,6 +427,11 @@ dowopn:
 :	jsr punter_reset; reset
 	jsr punter_receive; get data
 	jsr rs232_clear
+.ifdef PUNTER_STATS
+	jsr rs232_off
+	jsr clrchn
+	jsr punter_stats
+.endif
 	jmp xfrend	; close file
 
 ;----------------------------------------------------------------------

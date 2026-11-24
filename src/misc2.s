@@ -169,12 +169,7 @@ puntdelay:
 	pha
 	tya
 	pha
-	ldx #0
-	ldy #0
-:	inx
-	bne :-
-	iny
-	bne :-
+	jsr dodelay2	; same delay, with a floor in jiffies
 	pla
 	tay
 	pla

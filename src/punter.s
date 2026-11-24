@@ -41,7 +41,58 @@ filetype	= codebuf+$1b	; file type (from basic)
 stack		= codebuf+$1c	; stack pointer at entry
 dontdash	= codebuf+$1d	; flag to suppress dashes and colons
 specmode	= codebuf+$1e	; flag to send special start code
+tmark		= codebuf+$1f	; jiffy clock when the wait for a char began
+dmark		= codebuf+$20	; jiffy clock when a delay began
 buffer		= $0400      	; buffer for block
+
+; The original loops counted polls and CPU cycles, so on an accelerated
+; CPU (Ultimate at 16/64 MHz, SuperCPU) the timeouts shrank to a few
+; milliseconds and blocks were cut short. The timeouts now use the
+; jiffy clock and match the 1 MHz durations. The handshake delays (a
+; CCGMS addition, not in the original Punter) still count cycles: a
+; faster CPU answers sooner, which BBSes handle fine. DELAY_MIN can
+; give them a floor in jiffies.
+ACCEPT_TIMEOUT	= 36	; jiffies with no code before accept gives up
+RECV_TIMEOUT	= 30	; jiffies between block chars before recmodem gives up
+.ifndef DELAY_MIN
+DELAY_MIN	= 0	; jiffies a handshake delay lasts at least
+.endif
+
+; PUNTER_STATS=1: count where a download spends its time, and print it
+; at the end. Times are in jiffies (1/60 s).
+.ifdef PUNTER_STATS
+.macro ST_BEGIN
+	lda JIFFIES
+	sta pst_t0
+.endmacro
+.macro ST_END counter		; no labels: they would end @ scopes
+	lda JIFFIES
+	sec
+	sbc pst_t0
+	clc
+	adc counter
+	sta counter
+	lda counter+1
+	adc #0
+	sta counter+1
+.endmacro
+.macro ST_INC counter
+	lda counter
+	clc
+	adc #1
+	sta counter
+	lda counter+1
+	adc #0
+	sta counter+1
+.endmacro
+.else
+.macro ST_BEGIN
+.endmacro
+.macro ST_END counter
+.endmacro
+.macro ST_INC counter
+.endmacro
+.endif
 
 ;
 ; header offsets
@@ -132,6 +183,8 @@ accept_loop:
 	lda #0
 	sta timer1
 	sta timer1+1
+	lda JIFFIES
+	sta tmark
 
 @loop1:	; get char from modem
 	jsr check_abort
@@ -148,7 +201,7 @@ accept_loop:
 	lda timer1
 	and timer1+1
 	cmp #$ff	; timer -1: a code matched
-	beq @end
+	jeq @end
 :
 
 	; shift 3 char window, add new char
@@ -197,20 +250,18 @@ accept_loop:
 	jmp @loop1	; next char
 
 @nodata:
-	inc timer1
-	bne :+
-	inc timer1+1
-:	lda timer1+1
-	ora timer1
-	beq @end	; timer reached 0 -> match found
+	lda timer1
+	and timer1+1
+	cmp #$ff	; timer -1: a code matched
+	beq @end	; and no char followed it -> match found
 
-	lda timer1	; [XXX does nothing]
-	cmp #7		; [XXX does nothing]
+	lda JIFFIES
+	sec
+	sbc tmark
+	cmp #ACCEPT_TIMEOUT
+	jcc @loop1	; no timeout yet, next char
 
-	lda timer1+1
-	cmp #20		; 20*256 = 5120 iterations yet?
-	jcc @loop1	; no, next char
-
+	ST_INC pst_acc_to
 	lda #1		; timeout
 	sta stat
 	jmp dodelay
@@ -264,7 +315,9 @@ sendcode:
 ; receive one block, plus handshaking
 receive_block:
 	sta gbsave	; save "GOO"/"BAD" code
+	ST_BEGIN
 	jsr puntdelay	; ["modded this. handshaking delay"]
+	ST_END pst_delay
 	lda #0		; delay 0 on 1 off. [originally was off]
 	sta delay
 
@@ -273,8 +326,10 @@ receive_block:
 	ldy gbsave
 	jsr sendcode	; send "GOO" or "BAD" code
 
-@loop2:	lda #MASK_ACK
+@loop2:	ST_BEGIN
+	lda #MASK_ACK
 	jsr accept
+	ST_END pst_ack
 	lda stat
 	beq @again
 
@@ -284,7 +339,9 @@ receive_block:
 	jmp @loop1
 
 @again:	; request block
+	ST_BEGIN
 	jsr puntdelay	; ["modded this. handshaking delay"]
+	ST_END pst_delay
 	ldy #CODE_S_B
 	jsr sendcode
 
@@ -300,7 +357,10 @@ receive_block:
 	lda buffer+POS_BLKSIZE
 	sta bufcount
 	sta recsize
+	ST_BEGIN
 	jsr recmodem	; wait for block
+	ST_END pst_block
+	ST_INC pst_blocks
 
 	; handle status
 	lda stat
@@ -491,6 +551,8 @@ recmodem:
 @loop1:	lda #0		; clear timers
 	sta timer1
 	sta timer1+1
+	lda JIFFIES
+	sta tmark
 
 @loop2:	jsr check_abort
 	jsr prs232_get
@@ -531,20 +593,18 @@ recmodem:
 	sta timer1+1
 	jmp @loop2	; see if there is another chr
 
-@nochr:	inc timer1	; inc timer
-	bne :+
-	inc timer1+1
-:	lda timer1
-	ora timer1+1	; timer now at zero
+@nochr:	lda timer1
+	and timer1+1
+	cmp #$ff	; timer -1
 	beq @ack2	; "ACK" found with no following chrs
 
-	lda timer1	; [XXX does nothing]
-	cmp #6		; [XXX does nothing]
+	lda JIFFIES
+	sec
+	sbc tmark
+	cmp #RECV_TIMEOUT; time out yet
+	bcc @loop2	; no, get next chr
 
-	lda timer1+1
-	cmp #16		; time out yet
-	bne @loop2	; no, get next chr
-
+	ST_INC pst_rcv_to
 	lda #STAT_NODATA; no characters received at all
 	sta stat
 	cpy #0
@@ -731,6 +791,17 @@ rec3:	lda #0
 ;----------------------------------------------------------------------
 ; receive file contents
 receive:
+.ifdef PUNTER_STATS
+	ldx #pst_end-pst_start-1
+	lda #0
+:	sta pst_start,x
+	dex
+	bpl :-
+	lda JIFFIES
+	sta pst_first
+	lda JIFFIES-1
+	sta pst_first+1
+.endif
 	lda #1
 	sta blocknum
 	lda #0
@@ -762,6 +833,7 @@ receive:
 	beq @skip
 
 	; write to disk
+	ST_BEGIN
 	jsr rs232_off
 	ldx #LFN_FILE
 	jsr chkout
@@ -772,6 +844,7 @@ receive:
 	cpy bufcount
 	bne :-
 	jsr clrchn
+	ST_END pst_disk
 
 @skip:
 	; blocknum (hi) == $FF? then EOT
@@ -789,6 +862,7 @@ receive:
 	jmp @loop
 
 @crcbad:
+	ST_INC pst_bad
 	jsr clrchn
 	lda #':'
 	jsr goobad
@@ -934,7 +1008,11 @@ dodelay:
 ;	bne dod3
 	nop
 
+; ~1/3 s at 1 MHz, shorter on a faster CPU, at least DELAY_MIN jiffies.
+; Clobbers A, X, Y.
 dodelay2:
+	lda JIFFIES
+	sta dmark
 	ldx #0
 @1:	ldy #0
 @2:	iny
@@ -942,6 +1020,11 @@ dodelay2:
 	inx
 	;cpx #120
 	bne @1
+@3:	lda JIFFIES
+	sec
+	sbc dmark
+	cmp #DELAY_MIN
+	bcc @3
 dod3	rts
 
 ;----------------------------------------------------------------------
@@ -1010,3 +1093,74 @@ punter_cancel:
 
 	brk		; [XXX unused]
 	brk
+
+.ifdef PUNTER_STATS
+;----------------------------------------------------------------------
+; print the download statistics
+punter_stats:
+	sec
+	lda JIFFIES
+	sbc pst_first
+	sta pst_total
+	lda JIFFIES-1		; TIME is big-endian: $a1 is the next byte up
+	sbc pst_first+1
+	sta pst_total+1
+	ldx #0
+@loop:	lda pst_names,x		; counter offset, $ff ends the list
+	cmp #$ff
+	beq @rts
+	sta pst_off
+	inx
+@label:	lda pst_names,x
+	inx
+	cmp #0
+	beq @num
+	stx pst_idx
+	jsr chrout
+	ldx pst_idx
+	jmp @label
+@num:	stx pst_idx
+	ldy pst_off
+	lda pst_start,y
+	tax
+	lda pst_start+1,y
+	jsr outnum		; A = hi, X = lo
+	ldx pst_idx
+	jmp @loop
+@rts:	lda #CR
+	jmp chrout
+
+.macro PST_ENTRY counter, label
+	.byte counter-pst_start
+	.byte label, 0
+.endmacro
+SET_PETSCII
+pst_names:
+	PST_ENTRY pst_total, {CR,"total "}
+	PST_ENTRY pst_delay, {" delay "}
+	PST_ENTRY pst_ack, {CR,"ack "}
+	PST_ENTRY pst_block, {" block "}
+	PST_ENTRY pst_disk, {" disk "}
+	PST_ENTRY pst_blocks, {CR,"blocks "}
+	PST_ENTRY pst_bad, {" bad "}
+	PST_ENTRY pst_acc_to, {" acc-to "}
+	PST_ENTRY pst_rcv_to, {" rcv-to "}
+	.byte $ff
+SET_ASCII
+
+pst_idx:	.byte 0
+pst_off:	.byte 0
+pst_t0:		.byte 0
+pst_first:	.word 0
+pst_start:
+pst_total:	.word 0
+pst_delay:	.word 0
+pst_ack:	.word 0
+pst_block:	.word 0
+pst_disk:	.word 0
+pst_blocks:	.word 0
+pst_bad:	.word 0
+pst_acc_to:	.word 0
+pst_rcv_to:	.word 0
+pst_end:
+.endif
