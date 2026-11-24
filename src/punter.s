@@ -52,7 +52,9 @@ buffer		= $0400      	; buffer for block
 ; what they were at 4 MHz, the fastest speed known to work.
 ACCEPT_TIMEOUT	= 36	; jiffies with no code before accept gives up
 RECV_TIMEOUT	= 30	; jiffies between block chars before recmodem gives up
+.ifndef DELAY_MIN
 DELAY_MIN	= 6	; jiffies a handshake delay lasts at least
+.endif
 
 ; PUNTER_STATS=1: count where a download spends its time, and print it
 ; at the end. Times are in jiffies (1/60 s).
