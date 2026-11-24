@@ -146,7 +146,7 @@ Cycles through the RS-232 drivers:
 * SwiftLink/Turbo232: This requires cartridge with an external 6551 ACIA, like SwiftLink, Turbo232 or GLINK232T. The cart has to be configured to use NMI (not IRQ) and to be located at either $DE00 (setting `DE`), $DF00 (`DF`) or $D700 (`D7`).
 * Ultimate Net: Only offered on an Ultimate (1541 Ultimate-II/II+, Ultimate 64, C64 Ultimate) whose Ultimate Command Interface answers for the network target. CCGMS then talks TCP through the Ultimate's own network stack instead of its SwiftLink emulation, so the emulation's speed limit (its "Loop Delay") does not apply, and the baud rate setting is ignored. The driver behaves like a modem:
 	* `ATDT host:port` connects (the port defaults to 23) and answers `CONNECT`, or `NO CARRIER` if the host can't be found or reached. STOP aborts a slow dial. Auto-dialing from the phonebook works as with any modem, with either [firmware](#firmware) setting.
-	* `ATI` answers `ULTIMATE-NET MODEM EMULATOR` and `MADE BY CHRIS PAINTER`, then `LINK UP` or `LINK DOWN` (whether the Ultimate has a network address).
+	* `ATI` answers `ULTIMATE-NET MODEM EMULATOR` and `MADE BY CHRIS PAINTER`.
 	* `ATE0`/`ATE1` turns the command echo off or on; other `AT` commands answer `OK`.
 	* Hanging up (C= STOP) closes the connection. When the BBS hangs up, CCGMS shows `NO CARRIER`.
 	* There is no answer mode: the Ultimate's network interface for programs can't accept incoming connections.

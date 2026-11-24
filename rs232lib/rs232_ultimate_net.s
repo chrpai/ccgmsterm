@@ -11,8 +11,7 @@
 ; and the phonebook work unchanged:
 ;   ATD[T|P]["]host[:port]	connect (port defaults to 23);
 ;				answers CONNECT or NO CARRIER
-;   ATI				ULTIMATE-NET MODEM EMULATOR, MADE BY CHRIS PAINTER,
-;				then LINK UP or LINK DOWN
+;   ATI				ULTIMATE-NET MODEM EMULATOR, MADE BY CHRIS PAINTER
 ;   ATE0 / ATE1			command echo off/on
 ;   ATH, ATZ, AT...		OK
 ; While connected, all bytes go to the socket. Hang up (drop DTR) closes
@@ -51,8 +50,6 @@ UCI_ST_ERROR	= %00001000
 ; network target
 NET_TARGET	= $03
 NET_IDENTIFY	= $01
-NET_IF_COUNT	= $02
-NET_GET_IPADDR	= $05
 NET_OPEN_TCP	= $07
 NET_CLOSE	= $09
 NET_READ	= $10
@@ -560,49 +557,10 @@ at_upper:
 @rts:	rts
 
 ;----------------------------------------------------------------------
-; ATI: identification, then whether a network interface has an address
+; ATI: identification
 at_ident:
 	ldx #txt_ident-txt
-	jsr emit
-	lda #0
-	sta at_link
-	jsr uci_begin
-	lda #NET_IF_COUNT
-	jsr uci_exec_cmd
-	bne @print
-	lda resplen
-	beq @print
-	lda respbuf
-	sta at_ifcount
-	lda #0
-	sta at_if
-@if:	lda at_if
-	cmp at_ifcount
-	bcs @print
-	jsr uci_begin
-	lda #NET_GET_IPADDR
-	sta UCI_CMD
-	lda at_if
-	sta UCI_CMD
-	jsr uci_exec
-	bne @next
-	lda resplen
-	cmp #4
-	bcc @next
-	lda respbuf
-	ora respbuf+1
-	ora respbuf+2
-	ora respbuf+3
-	beq @next		; no IP address
-	inc at_link
-	bne @print
-@next:	inc at_if
-	bne @if
-@print:	ldx #txt_linkdown-txt
-	lda at_link
-	beq :+
-	ldx #txt_linkup-txt
-:	jmp emit
+	jmp emit
 
 ;======================================================================
 ; UCI
@@ -734,10 +692,6 @@ txt_nocarrier:
 txt_ident:
 	.byte CR,LF,"ULTIMATE-NET MODEM EMULATOR",CR,LF
 	.byte "MADE BY CHRIS PAINTER",CR,LF,0
-txt_linkup:
-	.byte "LINK UP",CR,LF,0
-txt_linkdown:
-	.byte "LINK DOWN",CR,LF,0
 
 ;----------------------------------------------------------------------
 net_available:	.byte 0	; 1: the UCI network target answered
@@ -751,9 +705,6 @@ txlen:		.byte 0
 cmdlen:		.byte 0
 at_echo:	.byte $80	; bit 7: echo commands
 at_info:	.byte 0
-at_link:	.byte 0
-at_if:		.byte 0
-at_ifcount:	.byte 0
 uci_stop:	.byte 0	; bit 7: STOP aborts the command
 uci_stat:	.byte 0,0
 resplen:	.byte 0

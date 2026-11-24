@@ -156,12 +156,9 @@ check('ATE0 turns echo off', get_all(m) == b"\r\nOK\r\n")
 put(m, b"hello\r")
 check('non-AT line is ignored', get_all(m) == b"")
 put(m, b"ATI\r")
-check('ATI link up', get_all(m) == b"\r\nULTIMATE-NET MODEM EMULATOR\r\nMADE BY CHRIS PAINTER\r\nLINK UP\r\n\r\nOK\r\n")
-net.ip = [0, 0, 0, 0]
-put(m, b"ATI\r")
-check('ATI link down', get_all(m) == b"\r\nULTIMATE-NET MODEM EMULATOR\r\nMADE BY CHRIS PAINTER\r\nLINK DOWN\r\n\r\nOK\r\n")
+check('ATI identifies', get_all(m) == b"\r\nULTIMATE-NET MODEM EMULATOR\r\nMADE BY CHRIS PAINTER\r\n\r\nOK\r\n" and net.cmd == [])
 put(m, b"ATX\x14I\r")
-check('delete key edits the line', get_all(m).endswith(b"ULTIMATE-NET MODEM EMULATOR\r\nMADE BY CHRIS PAINTER\r\nLINK DOWN\r\n\r\nOK\r\n"))
+check('delete key edits the line', get_all(m).endswith(b"MADE BY CHRIS PAINTER\r\n\r\nOK\r\n"))
 
 # dialing
 for name, line, want in [
