@@ -206,6 +206,17 @@ net, m = online(telnet_iac=1)
 net.remote = [0x41, 0xff, 0xfb, 0x01, 0xff, 0xff, 0x42]
 check('telnet IAC filter on receive', get_all(m) == b"A\xffB")
 
+# Y is kept by a get, also when it picks up a read (XMODEM indexes with Y)
+for iac in (0, 1):
+    net, m = online(telnet_iac=iac)
+    net.remote = list(b"\xff\xff" if iac else b"\xff") + list(range(40))
+    keep = True; out = []
+    for i in range(400):
+        a, x, y, c = call(m, 'iac_get', 0, 0, 0x5a)
+        keep = keep and y == 0x5a
+        if not c: out.append(a)
+    check('get keeps Y (IAC %s)' % ('on' if iac else 'off'), keep and out == [0xff] + list(range(40)), out[:4])
+
 # disable (before disk access): the UCI is left idle until enable
 net, m = online(busy=200)
 call(m, 'iac_get')                          # a read is now running

@@ -86,7 +86,15 @@ iac_offer:
 ;   FF FB..FE xx     -> (WILL/WONT/DO/DONT option) dropped
 ;   FF FA ... FF F0  -> (subnegotiation) dropped
 ;   FF xx            -> (any other command) dropped
+; Y is preserved: callers such as XMODEM keep a buffer index in it, and
+; the Ultimate Net driver uses Y when a read finishes.
 iac_get:
+	sty iac_y
+	jsr iac_get1
+	ldy iac_y	; (C and A are kept)
+	rts
+
+iac_get1:
 	bit iac_on
 	bmi @iac
 	jmp iac_raw
@@ -240,6 +248,7 @@ iac_state:
 	.byte 0
 iac_cmd:	.byte 0	; DO/DONT/WILL/WONT being received
 iac_opt:	.byte 0
+iac_y:		.byte 0	; caller's Y
 iac_mask:	.byte 0
 iac_we:		.byte 0	; options we have on
 iac_they:	.byte 0	; options the server has on
