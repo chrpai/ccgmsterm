@@ -429,7 +429,8 @@ net_lost:
 ;----------------------------------------------------------------------
 ; debug counters, shown after NO CARRIER and then cleared:
 ; R reads with data, E empty reads, B bytes, W polls that found the
-; read still running, N gets that returned no data (all 24 bit hex)
+; read still running, N gets that returned no data, T jiffies since
+; CONNECT (all 24 bit hex)
 st_read:			; X: bytes this read; keeps X and Y
 	txa
 	pha
@@ -468,9 +469,29 @@ st_clear:
 :	sta st,x
 	dex
 	bpl :-
+	sei
+	lda $a2			; jiffy clock at CONNECT
+	sta st_t0
+	lda $a1
+	sta st_t0+1
+	lda $a0
+	sta st_t0+2
+	cli
 	rts
 
 st_show:
+	sei			; T = jiffies since CONNECT
+	lda $a2
+	sec
+	sbc st_t0
+	sta st_time
+	lda $a1
+	sbc st_t0+1
+	sta st_time+1
+	lda $a0
+	sbc st_t0+2
+	sta st_time+2
+	cli
 	ldx #0
 @one:	lda st_lbl,x
 	jsr emit_byte
@@ -495,7 +516,7 @@ st_show:
 	jsr emit_byte
 	ldx net_t
 	inx
-	cpx #5
+	cpx #6
 	bne @one
 	lda #CR
 	jsr emit_byte
@@ -517,14 +538,16 @@ st_hex:
 :	adc #'0'
 	jmp emit_byte
 
-st_lbl:	.byte "REBWN"
+st_lbl:	.byte "REBWNT"
 st:
 st_reads:	.res 3
 st_empty:	.res 3
 st_bytes:	.res 3
 st_busy:	.res 3
 st_none:	.res 3
+st_time:	.res 3
 st_end:
+st_t0:		.res 3
 .endif
 
 ;----------------------------------------------------------------------
