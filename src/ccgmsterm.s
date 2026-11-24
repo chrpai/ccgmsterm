@@ -14,6 +14,7 @@
 .include "../rs232lib/rs232.inc"
 ; symbols required by rs232lib
 .export modem_type, baud_rate, is_pal_system	; modem settings
+.export telnet_iac, is_ultimate			; telnet IAC on Ultimate
 .export ribuf, revtabup				; buffer, temp storage
 
 ; 80columns
@@ -68,6 +69,7 @@ next_line:
 	.include "macro.s"
 	.include "configedit.s"
 	.include "reu.s"
+	.include "ultimate.s"
 	.include "theme.s"
 	.include "config.s"
 	.include "easyflash.s"

@@ -72,6 +72,10 @@ Must be set to the driver/config.
         0: NTSC
         1: PAL
 
+### `telnet_iac`, `is_ultimate`
+
+Read by the SwiftLink driver in `rs232_init`. If both are non-zero, the driver sends $FF as $FF $FF and strips telnet commands from the input (telnet IAC handling for the Ultimate's modem emulation).
+
 ## `ribuf`
 
 256 bytes of memory the driver can use for the input buffer.
