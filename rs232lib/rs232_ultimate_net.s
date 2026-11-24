@@ -67,6 +67,8 @@ CMDBUF_SIZE	= 64
 RESPBUF_SIZE	= 16
 READ_MARGIN	= 16	; ribuf room kept free for NO CARRIER
 READ_MAX	= 255-READ_MARGIN
+SPIN_READS	= 2	; empty reads after data that a get waits through
+SPIN_POLLS	= $0800	; and at most this many polls per get
 
 .segment "RS232"
 
@@ -112,6 +114,8 @@ net_rts:
 ; and start no new one, so the UCI is idle while other code (a KERNAL
 ; or DOS that talks to the Ultimate, for example) may use it.
 net_disable:
+	lda #0
+	sta net_spin
 	lda #$80
 	sta net_off
 	bit net_online
@@ -151,6 +155,10 @@ net_detect:
 ; The fast path only takes a byte from ribuf; the connection is serviced
 ; when ribuf is empty, and every 32 bytes so that typed bytes go out
 ; while a BBS keeps the buffer full.
+; While data is streaming in, a get that finds ribuf empty keeps reading
+; (up to SPIN_READS empty reads) instead of returning at once: the host
+; sends the next chunk only once the Ultimate has taken the last one, so
+; reading again right away, not one terminal loop later, keeps it coming.
 net_getraw:
 	ldx rhead
 	cpx rtail
@@ -159,9 +167,22 @@ net_getraw:
 	bne @have
 @poll:	lda #32
 	sta net_tick
-	jsr net_poll
+	lda #0
+	sta net_spinlo
+	lda #>SPIN_POLLS
+	sta net_spinhi
+@spin:	jsr net_poll
 	ldx rhead
 	cpx rtail
+	bne @have
+	lda net_spin
+	beq @none		; not streaming: return at once
+	dec net_spinlo
+	bne @spin
+	dec net_spinhi
+	bne @spin
+	lda #0			; (bound reached)
+	sta net_spin
 	beq @none
 @have:	lda ribuf,x
 	inc rhead
@@ -170,8 +191,11 @@ net_getraw:
 	rts
 @none:
 .ifdef NET_STATS
+	bit net_online
+	bpl :+
 	ldx #st_none-st
 	jsr st_inc
+:
 .endif
 	sec
 	rts
@@ -266,6 +290,15 @@ net_collect:
 	inx
 	bne @data
 @end:	sty rtail
+	txa			; streaming? (see net_getraw)
+	beq :+
+	lda #SPIN_READS
+	sta net_spin
+	bne :++
+:	lda net_spin
+	beq :+
+	dec net_spin
+:
 .ifdef NET_STATS
 	jsr st_read
 .endif
@@ -374,6 +407,7 @@ net_dropdtr:
 ; close the socket, back to command mode, and tell the terminal
 net_lost:
 	lda #0
+	sta net_spin
 	sta net_online
 	sta net_pend
 	sta txlen
@@ -427,6 +461,14 @@ st_inc:				; X: offset of a counter in st
 	bne :+
 	inc st+2,x
 :	rts
+
+st_clear:
+	lda #0
+	ldx #st_end-st-1
+:	sta st,x
+	dex
+	bpl :-
+	rts
 
 st_show:
 	ldx #0
@@ -482,6 +524,7 @@ st_empty:	.res 3
 st_bytes:	.res 3
 st_busy:	.res 3
 st_none:	.res 3
+st_end:
 .endif
 
 ;----------------------------------------------------------------------
@@ -514,6 +557,9 @@ net_open:
 	lda #$80
 	sta net_online
 	jsr iac_offer		; telnet: ask for binary mode
+.ifdef NET_STATS
+	jsr st_clear		; count this connection only
+.endif
 	ldx #txt_connect-txt
 	jmp emit
 @fail:	ldx #txt_nocarrier-txt
@@ -851,6 +897,9 @@ net_available:	.byte 0	; 1: the UCI network target answered
 net_online:	.byte 0	; bit 7: connected
 net_pend:	.byte 0	; 1: a READ is running
 net_off:	.byte 0	; bit 7: disabled, no reads
+net_spin:	.byte 0	; empty reads a get may still wait through
+net_spinlo:	.byte 0	; poll bound for one get
+net_spinhi:	.byte 0
 net_tick:	.byte 1	; bytes until the connection is serviced
 net_sock:	.byte 0
 net_port:	.word 0
