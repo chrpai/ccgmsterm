@@ -65,3 +65,12 @@ These unit tests run pieces of `build/ccgmsterm.prg` in the [py65](https://githu
         python3 test/ultimate/test_iac.py    # telnet commands are stripped on receive
 
 Each prints one `OK` line per case and exits non-zero on failure.
+
+## Print Speed
+
+`test/perf/printbench.py` runs CCGMS on a simulated C64 (py65) and counts the cycles the terminal spends per received byte, with the modem driver stubbed out. `test/perf/compare.py` feeds two builds the same random input and checks that they leave the same screen, color RAM and editor state. Both need the C64 KERNAL (901227-03) and BASIC ROMs as `kernal.bin` and `basic.bin` in a directory you pass as the first argument:
+
+        pip install py65
+        python3 test/perf/printbench.py ROMDIR
+        REU=1 MODEM=5 STREAM=plain python3 test/perf/printbench.py ROMDIR
+        python3 test/perf/compare.py ROMDIR old.prg build/ccgmsterm.prg

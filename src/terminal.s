@@ -29,7 +29,7 @@ term_mainloop:
 :
 
 	lda supercpu
-	beq @loop1
+	beq term_loop1
 	cmp #2		; already printed once
 	beq :+
 	lda #<txt_supercpu_enabled
@@ -41,10 +41,10 @@ term_mainloop:
 	; already on? turn on again. no biggie. save code.
 	jsr supercpu_on
 
-@loop1:
+term_loop1:
 ; print tempbuf unless empty (see phonebook.s)
 	lda bustemp
-	beq @skip
+	beq term_skip
 	ldy #1
 :	lda tempbuf,y
 	jsr chrout
@@ -53,7 +53,7 @@ term_mainloop:
 	bne :-
 	ldy #0
 	sty bustemp
-@skip:
+term_skip:
 
 	ldx #$ff
 	txs
@@ -65,11 +65,13 @@ term_mainloop:
 	sta KEYLOG+1
 
 	jsr clrchn
+	lda #0
+	sta rx_burst	; the cursor is shown from here on
 	jsr cursor_show
 
 ;----------------------------------------------------------------------
 ; modem output
-@loop2:
+term_loop2:
 	lda buffer_ptr
 	sta newbuf
 	lda buffer_ptr+1
@@ -78,57 +80,57 @@ term_mainloop:
 	jsr clrchn
 	jsr getin	; get character from keyboard
 	cmp #0
-	jeq @input_loop	; skip output code
+	jeq term_input_loop	; skip output code
 
 .if 0	; [XXX I don't think this makes sense any more]
 ; cbm-ctrl-f: reset/init user port RS-232
 	cmp #6		; ctrl-f
-	bne @no1
+	bne term_no1
 	ldx SHFLAG
 	cpx #SHFLAG_CBM | SHFLAG_CTRL
-	bne @no1
+	bne term_no1
 	; cia2ddrb and cia2pb need to be here
 	; for user port modem to function
 	ldx #16
 	stx cia2ddrb
 	ldx #0
 	stx cia2pb
-	jmp @loop2
-@no1
+	jmp term_loop2
+term_no1
 .endif
 
 ;	cmp #UNDERLINE
-;	bne @no2
+;	bne term_no2
 ;	ldx SHFLAG	; shift <- toggles
-;	beq @no4	; n/d cursor
+;	beq term_no4	; n/d cursor
 ;	cpx #SHFLAG_SHIFT
 ;	beq :+
 ;	lda allcap
 ;	eor #1
 ;	sta allcap
-;	jmp @loop2
+;	jmp term_loop2
 ;:	jmp toggle_cursor
-;@no2:
+;term_no2:
 
 ; shift-ctrl-[1..4]: swap screen
 	ldx SHFLAG
 	cpx #SHFLAG_SHIFT | SHFLAG_CTRL
-	bcc @no3
+	bcc term_no3
 	ldx #3
 :	cmp COLTAB,x	; PETSCII codes for ctrl-[1..4]
 	beq :+
 	dex
 	bpl :-
-	jmp @input_loop
+	jmp term_input_loop
 :	bit col80_active; unsupported in 80col mode
 	bpl :+		; (screen storage already used by bitmap)
 	jmp term_mainloop
 :	jmp swap_screen	; x holds pos 0-3
-@no3:
+term_no3:
 
 ; shift-stop: hang up
 	cmp #$83
-	bne @no4
+	bne term_no4
 	ldx SHFLAG
 	cpx #SHFLAG_CBM
 	bne :+	; not C= Stop
@@ -138,13 +140,13 @@ term_mainloop:
 	jsr outstr
 	jsr rs232_dropdtr
 :	jmp term_mainloop
-@no4:
+term_no4:
 
 ; f1..f8: functions
 	cmp #133	; <= F1
-	bcc @no5
+	bcc term_no5
 	cmp #140+1	; > F8
-	bcs @no5
+	bcs term_no5
 	pha
 	jsr set_bgcolor_0
 	jsr cursor_off
@@ -155,9 +157,9 @@ term_mainloop:
 	asl tmp03
 	clc
 	adc tmp03
-	sta @bbcarg
+	sta term_bbcarg
 	clc
-@bbcarg=*+1
+term_bbcarg=*+1
 	bcc *+2
 	jmp handle_f1_upload
 	jmp handle_f3_download
@@ -167,19 +169,19 @@ term_mainloop:
 	jmp handle_f4_buffer
 	jmp handle_f6_directory
 	jmp handle_f8_switch_term
-@no5:
+term_no5:
 
 ;	ldx allcap
-;	beq @upplow
+;	beq term_upplow
 ;	ldx $d018
 ;	cpx #23
-;	bne @upplow
+;	bne term_upplow
 ;	cmp #$41
-;	bcc @upplow
+;	bcc term_upplow
 ;	cmp #$5b  ;'z'+1
-;	bcs @upplow
+;	bcs term_upplow
 ;	ora #$80
-;@upplow:
+;term_upplow:
 
 ; ASCII conversion
 	sta tmp03
@@ -187,8 +189,8 @@ term_mainloop:
 	beq :+
 	jsr petscii_to_ascii
 	bne :+
-@loop2b:
-	jmp @loop2
+term_loop2b:
+	jmp term_loop2
 :
 
 ; send to modem
@@ -199,12 +201,12 @@ term_mainloop:
 	beq :+
 	jsr ascii_to_petscii
 	sta tmp03
-	jeq @loop2
+	jeq term_loop2
 :
 
 ; half-duplex
 	ldx half_duplex
-	beq @nohd
+	beq term_nohd
 	jsr clrchn
 	lda tmp03	; char
 	ldx ascii_mode
@@ -213,12 +215,12 @@ term_mainloop:
 	bne :+			; [XXX no-op]
 	lda #UNDERLINE
 	sta tmp03	; _ in ascii/half dup
-:	jmp @bufchk	; skip modem input
-@nohd:
+:	jmp term_bufchk	; skip modem input
+term_nohd:
 
 ;----------------------------------------------------------------------
 ; modem input
-@input_loop:
+term_input_loop:
 	jsr clrchn
 
 ; macro printing
@@ -233,7 +235,7 @@ term_mainloop:
 	lda #0
 	sta macro_dry_run_mode
 	jsr print_macro
-	jmp @loop1
+	jmp term_loop1
 :
 
 .if 0	; charset switching [XXX this has no effect ever]
@@ -249,13 +251,14 @@ term_mainloop:
 ; modem input
 	jsr rs232_get
 	cmp #0
-	beq @loop2b	; = @loop2
+	beq term_loop2b	; = term_loop2
 	ldx status
-	bne @loop2b	; = @loop2
+	bne term_loop2b	; = term_loop2
+term_rx_char:	; contn2 comes back here with the next byte
 
 .if AUTOMATION	; only enabled for automated tests
 	cmp #3		; code 3 (STOP)
-	bne @nauto
+	bne term_nauto
 	ldy #0
 :	jsr rs232_get
 	ldx status
@@ -265,21 +268,27 @@ term_mainloop:
 	cmp #3		; code 3 (STOP)
 	bne :-
 	sty NDX		; buffer count
-	jmp @loop2
-@nauto:
+	jmp term_rx_skip
+term_nauto:
 .endif
 
 ; ASCII conversion
 	ldx ascii_mode
 	beq :+
 	jsr ascii_to_petscii
-	beq @input_loop
+	beq term_rx_skip
 :	cmp #DEL
-	bne @bufchk	; [XXX no-op]
+	bne term_bufchk	; [XXX no-op]
 	lda #$14	; [XXX no-op; was: $5F in Craig Smith source]
-@bufchk:
+term_bufchk:
 	jsr buffer_put
 	jmp contn
+
+; a received byte that doesn't get printed
+term_rx_skip:
+	lda rx_burst
+	jeq term_input_loop	; cursor is shown, carry on as usual
+	jmp term_mainloop; cursor is hidden: show it again
 
 ; [XXX this code is at a very awkward location, could be integrated better]
 ;<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
@@ -318,6 +327,8 @@ contn:
 ;<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
 ; handle control codes sent from the BBS
 handle_control_codes:
+	cmp #$16+1	; nothing below needs a printable char
+	bcs @8
 	cmp #$0a	; ctrl-j: cursor on
 	beq @1
 	cmp #$0b	; ctrl-k: cursor off
@@ -327,8 +338,10 @@ handle_control_codes:
 	ldx ascii_mode
 	bne @2
 	pha
+	lda rx_burst	; cursor hidden while printing a burst
+	bne :+
 	jsr cursor_off
-	pla
+:	pla
 	and #1		; form to ch flag
 	eor #1
 	sta cursor_flag
@@ -378,7 +391,7 @@ handle_control_codes:
 ;	lda #DEL
 ;	bne ctrlex
 
-;@8:
+@8:
 	ldx prev_char
 	cpx #$02	; ctrl-b: set background color
 	bne @9
@@ -400,9 +413,35 @@ handle_control_codes:
 
 contn2:
 	pha
+	lda rx_burst	; cursor already hidden?
+	bne :+
 	jsr cursor_off
-	pla
-	jsr chrout	; print input byte to screen
-	jsr quote_insert_off; kill modes the char might have enabled
-	jmp term_mainloop
+:	pla
+	jsr fast_chrout	; print input byte to screen
+	lda #0		; kill modes the char might have enabled
+	sta qmode	; (quote_insert_off)
+	sta imode
+
+; While more bytes are waiting, print them without going through the main
+; loop: drawing and erasing the cursor, CLRCHN and GETIN for every byte cost
+; more than printing it. The cursor comes back when the data pauses, a key
+; is pressed or a modifier key is held. The destructive cursor (ctrl-k)
+; keeps the old path, since erasing it also blanks the character under it.
+	lda cursor_flag
+	beq @show
+	lda NDX		; keys waiting?
+	ora SHFLAG	; shift/C=/ctrl held (macros, hangup, screen swap)?
+	bne @show
+	jsr rs232_get
+	cmp #0
+	beq @show
+	ldx status
+	bne @show	; same as the main loop: drop it
+	ldx #1
+	stx rx_burst
+	jmp term_rx_char
+@show:	jmp term_mainloop
+
+rx_burst:
+	.byte 0		; 1: printing a burst, cursor not drawn
 
