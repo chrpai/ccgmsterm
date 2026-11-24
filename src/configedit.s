@@ -382,7 +382,8 @@ f7parm:
 :	jmp print_iac
 
 ;----------------------------------------------------------------------
-; C=1: running on an Ultimate with a SwiftLink modem type.
+; C=1: running on an Ultimate with a SwiftLink or Ultimate Net modem type
+; (all types from MODEM_TYPE_SWIFTLINK_DE up; baud does not matter for Net).
 ; Gates the telnet IAC option and the 57600 baud setting.
 ultimate_swiftlink:
 	lda is_ultimate
