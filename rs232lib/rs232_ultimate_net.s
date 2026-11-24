@@ -67,6 +67,9 @@ CMDBUF_SIZE	= 64
 RESPBUF_SIZE	= 16
 READ_MARGIN	= 16	; ribuf room kept free for NO CARRIER
 READ_MAX	= 255-READ_MARGIN
+UCI_TIMEOUT	= 10*60	; jiffies a command may take before it is aborted
+T_CMD		= 0	; jif_t0 slots
+T_READ		= 2
 
 .segment "RS232"
 
@@ -210,15 +213,21 @@ net_poll:
 	lda UCI_STATUS
 	and #UCI_ST_STATE
 	cmp #UCI_ST_BUSY
+	bne @done
 .ifdef NET_STATS
-	bne :+
 	ldx #st_busy-st
-	jmp st_inc
-:
-.else
-	beq @rts		; read still running
+	jsr st_inc
 .endif
-	jsr net_collect
+	ldx #T_READ		; read still running: for too long?
+	jsr jif_late
+	bcc @rts
+	lda #UCI_ABORT		; the Ultimate didn't answer: give up
+	sta UCI_CONTROL
+	jsr uci_idle
+	lda #0
+	sta net_pend
+	jmp net_lost
+@done:	jsr net_collect
 	bit net_online
 	bpl @rts
 @idle:	lda txlen
@@ -259,6 +268,8 @@ net_poll:
 	sta UCI_CONTROL
 	lda #1
 	sta net_pend
+	ldx #T_READ
+	jmp jif_mark
 @rts:	rts
 
 ;----------------------------------------------------------------------
@@ -266,11 +277,12 @@ net_poll:
 net_wait_read:
 	lda net_pend
 	beq @rts
-:	lda UCI_STATUS
-	and #UCI_ST_STATE
-	cmp #UCI_ST_BUSY
-	beq :-
+	jsr uci_wait
+	bcs @dead
 	jmp net_collect
+@dead:	lda #0			; the Ultimate didn't answer: give up
+	sta net_pend
+	jmp net_lost
 @rts:	rts
 
 ;----------------------------------------------------------------------
@@ -890,8 +902,10 @@ uci_begin:
 	and #UCI_ST_STATE
 	beq @idle
 	cmp #UCI_ST_BUSY
-	beq :-
-	lda #UCI_DATA_ACC	; a reply nobody took
+	bne @acc
+	jsr uci_wait		; (aborted if it takes too long)
+	jmp :-
+@acc:	lda #UCI_DATA_ACC	; a reply nobody took
 	sta UCI_CONTROL
 	bne :-
 @idle:	lda #NET_TARGET
@@ -907,27 +921,22 @@ uci_exec_cmd:
 uci_exec:
 	lda #UCI_PUSH_CMD
 	sta UCI_CONTROL
-@wait:	lda UCI_STATUS
+	bit uci_stop
+	bmi @wait
+	jsr uci_wait		; no STOP: a time limit instead
+	bcc @done
+	bcs @fail
+@wait:	lda UCI_STATUS		; dial: may take long, STOP aborts
 	and #UCI_ST_STATE
 	cmp #UCI_ST_BUSY
 	bne @done
-	bit uci_stop
-	bpl @wait
 	lda STKEY
 	cmp #$7f
 	bne @wait
 	lda #UCI_ABORT
 	sta UCI_CONTROL
-	ldx #0
-	ldy #0
-:	lda UCI_STATUS		; wait for idle, with a timeout
-	and #UCI_ST_STATE
-	beq :+
-	dex
-	bne :-
-	dey
-	bne :-
-:	lda #0
+	jsr uci_idle
+@fail:	lda #0
 	sta uci_stop
 	sta resplen
 	lda #'9'		; not OK
@@ -945,6 +954,73 @@ uci_exec:
 	inx
 	bne @data
 @end:	stx resplen
+	jmp uci_finish
+;----------------------------------------------------------------------
+; Wait while the Ultimate is busy with a command, at most UCI_TIMEOUT.
+; C=1: it took too long and was aborted. Keeps Y.
+uci_wait:
+	ldx #T_CMD
+	jsr jif_mark
+@w:	lda UCI_STATUS
+	and #UCI_ST_STATE
+	cmp #UCI_ST_BUSY
+	bne @ok
+	ldx #T_CMD
+	jsr jif_late
+	bcc @w
+	lda #UCI_ABORT
+	sta UCI_CONTROL
+	jsr uci_idle
+	sec
+	rts
+@ok:	clc
+	rts
+
+; after an abort: wait for idle, with a limit; keeps Y
+uci_idle:
+	tya
+	pha
+	ldx #0
+	ldy #0
+:	lda UCI_STATUS
+	and #UCI_ST_STATE
+	beq :+
+	dex
+	bne :-
+	dey
+	bne :-
+:	pla
+	tay
+	rts
+
+; X: T_CMD or T_READ. Note the jiffy clock.
+jif_mark:
+	php
+	sei
+	lda $a2
+	sta jif_t0,x
+	lda $a1
+	sta jif_t0+1,x
+	plp
+	rts
+
+; X: T_CMD or T_READ. C=1: UCI_TIMEOUT jiffies have passed since jif_mark.
+jif_late:
+	php
+	sei
+	lda $a2
+	sec
+	sbc jif_t0,x
+	sta jif_d
+	lda $a1
+	sbc jif_t0+1,x
+	plp
+	cmp #>UCI_TIMEOUT
+	bne :+
+	lda jif_d
+	cmp #<UCI_TIMEOUT
+:	rts
+
 ; read the status, acknowledge; Z=1: status 00,OK
 uci_finish:
 	lda #0
@@ -1032,6 +1108,8 @@ at_info:	.byte 0
 uci_stop:	.byte 0	; bit 7: STOP aborts the command
 uci_stat:	.byte 0,0
 uci_tail:	.byte 0,0	; last two characters of the status
+jif_t0:		.word 0,0	; T_CMD, T_READ
+jif_d:		.byte 0
 resplen:	.byte 0
 respbuf:	.res RESPBUF_SIZE
 txbuf:		.res TXBUF_SIZE

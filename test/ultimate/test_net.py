@@ -244,6 +244,26 @@ data = [i & 255 for i in range(600)]
 net.remote = list(data)
 check('data flag gaps lose nothing', list(get_all(m)) == data)
 
+# the Ultimate stops answering: reads and hang-up give up after the
+# time limit instead of hanging (the jiffy clock ticks on every look)
+def ticking(m):
+    clock = [0]
+    def jiffy(a):
+        clock[0] += 1
+        return (clock[0] >> (0 if a == 0xa2 else 8)) & 255
+    m.memory.subscribe_to_read([0xa1, 0xa2], jiffy)
+net, m = online()
+ticking(m)
+net.hang = True
+out = get_all(m, polls=2000)
+check('stuck read gives up with NO CARRIER', out.endswith(b"NO CARRIER\r\n") and net.aborted, out)
+net, m = online()
+call(m, 'iac_get')
+ticking(m)
+net.hang = True
+call(m, 'net_dropdtr')
+check('hang-up returns when the Ultimate is stuck', get_all(m).endswith(b"NO CARRIER\r\n") and net.aborted)
+
 # disable (before disk access): the UCI is left idle until enable
 net, m = online(busy=200)
 call(m, 'iac_get')                          # a read is now running
