@@ -7,6 +7,9 @@ DEFAULT_BAUDRATE ?= 2400
 # NET_STATS=1: Ultimate Net shows debug counters after NO CARRIER
 NET_STATS ?= 0
 NET_DEFS := $(if $(filter 1,$(NET_STATS)),-DNET_STATS=1)
+# PUNTER_STATS=1: Punter downloads print where the time went
+PUNTER_STATS ?= 0
+PUNTER_DEFS := $(if $(filter 1,$(PUNTER_STATS)),-DPUNTER_STATS=1)
 
 EXO_PATH := build/bin/exomizer
 EXO_ARGS := sfx sys -q -n -T4 -M256 -Di_perf=2
@@ -21,7 +24,7 @@ endif
 all: $(EXO_PATH)
 	make build/rs232.lib
 
-	ca65 -g src/ccgmsterm.s -o build/ccgmsterm.o -DEASYFLASH=$(EASYFLASH) -DAUTOMATION=$(AUTOMATION) -DDEFAULT_DRIVER=$(DEFAULT_DRIVER) -DDEFAULT_BAUDRATE=$(DEFAULT_BAUDRATE)
+	ca65 -g src/ccgmsterm.s -o build/ccgmsterm.o -DEASYFLASH=$(EASYFLASH) -DAUTOMATION=$(AUTOMATION) -DDEFAULT_DRIVER=$(DEFAULT_DRIVER) -DDEFAULT_BAUDRATE=$(DEFAULT_BAUDRATE) $(PUNTER_DEFS)
 
 	ca65 -g src/80columns.s -o build/80columns.o -DEASYFLASH=$(EASYFLASH)
 	ca65 -g src/charset.s -o build/charset.o -DEASYFLASH=$(EASYFLASH)
