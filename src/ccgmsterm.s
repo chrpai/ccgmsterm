@@ -53,6 +53,7 @@ next_line:
 	.include "dir.s"
 	.include "ansi.s"
 	.include "cursor.s"
+	.include "fastprint.s"
 	.include "input.s"
 	.include "misc.s"
 	.include "diskcmd.s"
