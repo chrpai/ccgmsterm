@@ -11,6 +11,8 @@
 .include "rs232.inc"		; for MODEM_TYPE_*
 .import ribuf			; external
 .import rs232_rti
+.import telnet_iac		; config: 1 = telnet IAC handling wanted
+.import is_ultimate		; runtime: 1 = Ultimate (UCI) detected
 
 ; function table for dispatcher
 .export sw_funcs
@@ -125,7 +127,19 @@ sw_setup:
 @de:	lda #$de
 	bne @cont
 @df:	lda #$df
-@cont:	sta sm1+2
+@cont:	pha
+; telnet IAC handling is active only on an Ultimate (whose modem
+; emulation is a raw TCP socket) and only when the user enabled it
+	lda #0
+	sta iac_state
+	ldy telnet_iac
+	beq :+
+	ldy is_ultimate
+	beq :+
+	lda #$80
+:	sta iac_on
+	pla
+	sta sm1+2
 	sta sm2+2
 	sta sm3+2
 	sta sm4+2
@@ -194,7 +208,19 @@ sm19:	sta sw_ctrl
 	rts
 
 ;----------------------------------------------------------------------
+; send byte
+; In telnet IAC mode, a $FF data byte is sent as $FF $FF (RFC 854).
 sw_putxfer:
+	jsr sw_put1
+	cmp #$ff
+	bne :+
+	bit iac_on
+	bpl :+
+	jsr sw_put1
+:	clc
+	rts
+
+sw_put1:
 	pha
 sm20:	lda sw_cmd
 	sta temp
@@ -207,7 +233,6 @@ temp=*+1
 	lda #0		; restore rts state
 sm22:	sta sw_cmd
 	pla
-	clc
 	rts
 
 ;----------------------------------------------------------------------
@@ -226,7 +251,63 @@ sm25:	sta sw_cmd
 
 ;----------------------------------------------------------------------
 ; get byte from serial interface
+; In telnet IAC mode, telnet commands are stripped from the input:
+;   FF FF            -> one $FF data byte
+;   FF FB..FE xx     -> (WILL/WONT/DO/DONT option) dropped
+;   FF FA ... FF F0  -> (subnegotiation) dropped
+;   FF xx            -> (any other command) dropped
 sw_getxfer:
+	bit iac_on
+	bmi @iac
+	jmp sw_getraw
+
+@next:	sta iac_state
+@iac:	jsr sw_getraw
+	bcs @rts	; no data
+	ldx iac_state
+	beq @s0
+	dex
+	beq @s1
+	dex
+	beq @s2
+	dex
+	beq @s3
+; state 4: inside subnegotiation, after IAC
+	cmp #$f0	; SE
+	beq @to0
+	lda #3		; anything else (incl. escaped $FF): still in SB
+	bne @next
+; state 3: inside subnegotiation
+@s3:	cmp #$ff
+	bne @iac
+	lda #4
+	bne @next
+; state 2: option byte after WILL/WONT/DO/DONT
+@s2:
+@to0:	lda #0
+	beq @next
+; state 1: after IAC
+@s1:	cmp #$ff
+	beq @data	; escaped $FF
+	cmp #$fb
+	bcs @opt	; WILL/WONT/DO/DONT
+	cmp #$fa
+	bne @to0	; other 2-byte command
+	lda #3		; SB
+	bne @next
+@opt:	lda #2
+	bne @next
+; state 0: normal
+@s0:	cmp #$ff
+	bne @ok
+	lda #1
+	bne @next
+@data:	ldx #0
+	stx iac_state
+@ok:	clc
+@rts:	rts
+
+sw_getraw:
 	ldx rhead
 	cpx rtail
 	beq @1		; skip (empty buffer, return with carry set)
@@ -248,6 +329,13 @@ sw_getxfer:
 
 ;----------------------------------------------------------------------
 paused:
+	.byte 0
+
+; telnet IAC handling: bit 7 set = active
+iac_on:
+	.byte 0
+; telnet receive state (0: data, 1: IAC, 2: option, 3: SB, 4: SB+IAC)
+iac_state:
 	.byte 0
 
 ;----------------------------------------------------------------------

@@ -166,6 +166,18 @@ f7chgk
 	jmp config_loop
 @no7:
 
+; I: telnet IAC (Ultimate + SwiftLink only)
+	cmp #'I'
+	bne @no13
+	jsr iac_available
+	bcc :+
+	lda telnet_iac
+	eor #1
+	sta telnet_iac
+	jsr rsopen
+:	jmp config_loop
+@no13:
+
 ; P: Protocol
 	cmp #'P'
 	bne @no8
@@ -357,8 +369,33 @@ f7parm:
 	ldy #5
 	jsr prmclc
 	ldx easyflash_use_disk
-	jmp prmprt
-:	rts
+	jsr prmprt
+:	jmp print_iac
+
+;----------------------------------------------------------------------
+; C=1: telnet IAC option applies (Ultimate + SwiftLink modem type)
+iac_available:
+	lda is_ultimate
+	beq :+
+	lda modem_type
+	cmp #MODEM_TYPE_SWIFTLINK_DE	; C=1 for all SwiftLink types
+	rts
+:	clc
+	rts
+
+; print telnet IAC state on the duplex line
+print_iac:
+	lda #<txt_iac_na
+	ldy #>txt_iac_na
+	jsr iac_available
+	bcc @print
+	lda #<txt_iac_off
+	ldy #>txt_iac_off
+	ldx telnet_iac
+	beq @print
+	lda #<txt_iac_on
+	ldy #>txt_iac_on
+@print:	jmp outstr
 
 ;----------------------------------------------------------------------
 txt_cmd_scratch:
@@ -383,7 +420,7 @@ txt_settings_menu:
 tcol27a	.byte WHITE
 	.byte " ",HILITE,"auto-Dialer/Phonebook",CR,CR
 	.byte " ",HILITE,"baud Rate   -",CR,CR
-	.byte " ",HILITE,"duplex      -",CR,CR
+	.byte " ",HILITE,"duplex      -        telnet ",HILITE,"iac -",CR,CR
 	.byte " ",HILITE,"modem Type  -",CR,CR
 	.byte " ",HILITE,"f"
 tcol27b	.byte " "
@@ -405,6 +442,13 @@ txt_press_return_to_abort:
 
 txt_return:
 	.byte SETCSR,22,7,CYAN,"RETURN",CR,0
+
+txt_iac_on:
+	.byte SETCSR,6,35,WHITE,"On ",0
+txt_iac_off:
+	.byte SETCSR,6,35,WHITE,"Off",0
+txt_iac_na:
+	.byte SETCSR,6,35,WHITE,"N/A",0
 SET_ASCII
 
 ;----------------------------------------------------------------------

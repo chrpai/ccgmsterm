@@ -54,3 +54,14 @@ This test server prints characters at the full data rate.
         sh fastout.sh
 
 It can easily overflow the 256 byte CCGMS input buffer if printing cannot keep up. The pattern printed makes it easy to see when characters are dropped.
+
+## Ultimate / telnet IAC
+
+These unit tests run pieces of `build/ccgmsterm.prg` in the [py65](https://github.com/mnaberez/py65) 6502 emulator (`pip install py65`), after a plain `make`:
+
+        python3 test/ultimate/test_uci.py    # UCI detection against an emulated Command Interface
+        python3 test/ultimate/test_setup.py  # IAC handling turns on only with option + Ultimate
+        python3 test/ultimate/test_put.py    # $FF is sent as $FF $FF
+        python3 test/ultimate/test_iac.py    # telnet commands are stripped on receive
+
+Each prints one `OK` line per case and exits non-zero on failure.

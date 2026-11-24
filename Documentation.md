@@ -73,7 +73,7 @@ The RETURN key will exit the buffer menu.
 
         Auto-Dialer/Phonebook
         Baud Rate   - 2400
-        Duplex      - Full
+        Duplex      - Full        Telnet IAC - N/A
         Modem Type  - User Port 300-2400
         Firmware    - Standard
         Protocol    - XMODEM
@@ -148,6 +148,17 @@ Cycles through the RS-232 drivers:
 ### Firmware
 
 This configures the syntax used by the auto-dialer. The ZiModem firmware requires the address after `ATDT` in quotes, standard firmwares (WiModem, StrikeLink, ...) do not accept quotes.
+
+### Telnet IAC
+
+Only available on an Ultimate (1541 Ultimate-II/II+, Ultimate 64, C64 Ultimate) with a SwiftLink [modem type](#modem-type); otherwise it shows `N/A`. The Ultimate is detected at startup through the Ultimate Command Interface, which has to be enabled in the Ultimate menu ("Command Interface").
+
+The Ultimate's modem emulation passes data straight to a TCP socket. Telnet BBSes treat $FF as the start of a telnet command (IAC), so a lone $FF gets swallowed. With this option on, CCGMS:
+
+* sends every $FF data byte as $FF $FF, and
+* on receive, turns $FF $FF back into one $FF and drops telnet commands (WILL/WONT/DO/DONT, subnegotiation).
+
+Turn it off for BBSes that use raw TCP instead of telnet. The setting is saved with the config.
 
 ### Protocol
 

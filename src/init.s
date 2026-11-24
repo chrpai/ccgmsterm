@@ -90,6 +90,9 @@ start:
 	jsr reu_detect
 @ef2:
 
+; Ultimate detection (UCI)
+	jsr ultimate_detect
+
 ; init. buffer & open rs232
 	lda newbuf
 	sta buffer_ptr
