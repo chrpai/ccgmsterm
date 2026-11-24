@@ -340,6 +340,7 @@ iac_state:
 
 ;----------------------------------------------------------------------
 ; MOS 6551 ACIA baud rate constants
+SW_BAUD_EXT	= %10000	; rate bits 0000: external clock (Ultimate: top speed)
 SW_BAUD_50	= %10001
 SW_BAUD_75	= %10010
 SW_BAUD_109_92	= %10011
@@ -366,5 +367,9 @@ swbaud:
 	.byte SW_BAUD_4800	; 4800
 	.byte SW_BAUD_9600	; 9600
 	.byte SW_BAUD_19200	; 38400
+; Rate bits 0000 select the external clock on a real 6551, so this is
+; only valid on an Ultimate, whose ACIA emulation runs at its fastest
+; pace for it. The caller is responsible for not selecting it elsewhere.
+	.byte SW_BAUD_EXT	; 57600 (Ultimate only)
 
-	.byte $10,$10,$10	; [XXX unused]
+	.byte $10,$10		; [XXX unused]

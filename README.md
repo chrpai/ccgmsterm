@@ -16,7 +16,7 @@
 * Serial drivers (stable on NTSC and PAL 🔴)
 	* User Port (300-2400 baud)
 	* UP9600 (300-9600 baud)
-	* SwiftLink $DE00/$DF00/$D700/NMI (300-38400 baud)
+	* SwiftLink $DE00/$DF00/$D700/NMI (300-38400 baud), 57600 on an Ultimate
 * File transfer protocols:
 	* Punter, Multi-Punter
 	* XMODEM, XMODEM-CRC, XMODEM-1K 🔴

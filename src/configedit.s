@@ -89,11 +89,14 @@ f7chgk
 	jmp @reset
 @inc:	inc baud_rate
 	lda baud_rate
-	cmp #BAUD_38400+1
-	bne :+
+	cmp #BAUD_57600
+	bcc @open	; up to 38400: always fine
+	bne @reset	; past 57600: wrap around
+	jsr ultimate_swiftlink	; 57600: Ultimate + SwiftLink only
+	bcs @open
 @reset:	lda #BAUD_300
 	sta baud_rate
-:	jsr rsopen	;5-16 add failsafe....
+@open:	jsr rsopen	;5-16 add failsafe....
 	jmp config_loop
 @no2:
 
@@ -169,7 +172,7 @@ f7chgk
 ; I: IAC escape (telnet; Ultimate + SwiftLink only)
 	cmp #'I'
 	bne @no13
-	jsr iac_available
+	jsr ultimate_swiftlink
 	bcc :+
 	lda telnet_iac
 	eor #1
@@ -373,8 +376,9 @@ f7parm:
 :	jmp print_iac
 
 ;----------------------------------------------------------------------
-; C=1: telnet IAC option applies (Ultimate + SwiftLink modem type)
-iac_available:
+; C=1: running on an Ultimate with a SwiftLink modem type.
+; Gates the telnet IAC option and the 57600 baud setting.
+ultimate_swiftlink:
 	lda is_ultimate
 	beq :+
 	lda modem_type
@@ -383,9 +387,23 @@ iac_available:
 :	clc
 	rts
 
+; 57600 is only valid on an Ultimate with a SwiftLink modem type.
+; Drop a saved or leftover 57600 back to 38400 anywhere else.
+; (clobbers A)
+baud_failsafe:
+	lda baud_rate
+	cmp #BAUD_57600
+	bcc :+		; up to 38400: fine
+	bne @fix	; out of range
+	jsr ultimate_swiftlink
+	bcs :+
+@fix:	lda #BAUD_38400
+	sta baud_rate
+:	rts
+
 ; print telnet IAC state on the duplex line
 print_iac:
-	jsr iac_available	; (clobbers A)
+	jsr ultimate_swiftlink	; (clobbers A)
 	lda #<txt_iac_na
 	ldy #>txt_iac_na
 	bcc @print
@@ -460,4 +478,5 @@ baudrates:
 	.word 9600
 	.word 19200
 	.word 38400
+	.word 57600
 

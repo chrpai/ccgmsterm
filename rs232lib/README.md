@@ -66,6 +66,9 @@ Must be set to the driver/config.
         BAUD_9600	= 4
         BAUD_19200	= 5
         BAUD_38400	= 6
+        BAUD_57600	= 7
+
+`BAUD_57600` is only valid with a SwiftLink modem type on an Ultimate. It writes 6551 control rate bits `0000`, which a real 6551 treats as "external clock" (a real SwiftLink tops out at 38400). The Ultimate's ACIA emulation runs at its fastest pace for that setting instead. The caller must not select it on other hardware.
 
 ### `is_pal_system`
 
