@@ -92,6 +92,7 @@ start:
 
 ; Ultimate detection (UCI)
 	jsr ultimate_detect
+	jsr net_detect	; Ultimate network target (Ultimate Net modem type)
 
 ; init. buffer & open rs232
 	lda newbuf

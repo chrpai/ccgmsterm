@@ -23,7 +23,7 @@ def run_get(stream, iac):
     for _ in range(len(stream)+2):
         m.sp=0xfd; m.memory[0x1ff]=0xff; m.memory[0x1fe]=0xfe  # return to $ffff
         m.memory[0xffff]=0
-        m.pc=sym['sw_getxfer']
+        m.pc=sym['iac_get']
         n=0
         while m.pc!=0xffff:
             m.step(); n+=1
