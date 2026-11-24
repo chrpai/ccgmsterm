@@ -312,7 +312,24 @@ net_collect:
 	cmp #'0'
 	bne @lost
 	lda uci_stat+1
-	cmp #'2'		; 02,NO DATA
+	cmp #'2'		; 02,NO DATA: errno
+	bne @lost
+; "02,NO DATA: 11" (EAGAIN) is just no data. Another errno, such as 104
+; (connection reset), means the connection is gone: without this check
+; the terminal would stay online after a reset.
+	ldx #1
+:	lda uci_tail,x
+	cmp #'0'
+	bcc @rts		; not a number: no errno given
+	cmp #'9'+1
+	bcs @rts
+	dex
+	bpl :-
+	lda uci_tail
+	cmp #'1'
+	bne @lost
+	lda uci_tail+1
+	cmp #'1'
 	beq @rts
 @lost:	jmp net_lost
 @rts:	rts
@@ -859,6 +876,8 @@ uci_finish:
 	lda #0
 	sta uci_stat
 	sta uci_stat+1
+	sta uci_tail
+	sta uci_tail+1
 	ldx #0
 @stat:	bit UCI_STATUS
 	bvc @send
@@ -866,7 +885,12 @@ uci_finish:
 	cpx #2
 	bcs :+
 	sta uci_stat,x
-:	inx
+:	pha			; keep the last two characters too
+	lda uci_tail+1
+	sta uci_tail
+	pla
+	sta uci_tail+1
+	inx
 	bne @stat
 @send:	lda #UCI_DATA_ACC
 	sta UCI_CONTROL
@@ -935,6 +959,7 @@ at_echo:	.byte $80	; bit 7: echo commands
 at_info:	.byte 0
 uci_stop:	.byte 0	; bit 7: STOP aborts the command
 uci_stat:	.byte 0,0
+uci_tail:	.byte 0,0	; last two characters of the status
 resplen:	.byte 0
 respbuf:	.res RESPBUF_SIZE
 txbuf:		.res TXBUF_SIZE

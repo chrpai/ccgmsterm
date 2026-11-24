@@ -217,6 +217,21 @@ for iac in (0, 1):
         if not c: out.append(a)
     check('get keeps Y (IAC %s)' % ('on' if iac else 'off'), keep and out == [0xff] + list(range(40)), out[:4])
 
+# connection reset: "02,NO DATA: 104" hangs up; EAGAIN and a bare
+# "02,NO DATA" are only no data
+for stat, lost in ((b"02,NO DATA: 104", True), (b"02,NO DATA: 11", False), (b"02,NO DATA", False)):
+    net, m = online()
+    net.remote = list(b"tail")
+    orig = net.run
+    def run(c, orig=orig, stat=stat, net=net):
+        if c[1] == 0x10 and not net.remote:
+            net.reads.append(c[3]); net.reply([255, 255], stat); return
+        orig(c)
+    net.run = run
+    out = get_all(m)
+    ok = out == (b"tail\r\nNO CARRIER\r\n" if lost else b"tail") and bool(m.memory[sym['net_online']] & 0x80) != lost
+    check('read status %s %s' % (stat.decode(), 'hangs up' if lost else 'is no data'), ok, out)
+
 # disable (before disk access): the UCI is left idle until enable
 net, m = online(busy=200)
 call(m, 'iac_get')                          # a read is now running
