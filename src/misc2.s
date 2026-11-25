@@ -164,8 +164,16 @@ supercpu_off:
 ; [XXX this should be closer to the PUNTER code]
 puntdelay:
 ; you got a better way to do this? have at it!
+; Over Ultimate Net there is nothing to wait for: the BBS's TCP stack
+; buffers whatever we send, so the pause only costs time (~20 ms per
+; code at 16 MHz, 2 codes per block).
 	pha
-	txa
+	lda modem_type
+	cmp #MODEM_TYPE_ULTIMATE_NET
+	bne :+
+	pla
+	rts
+:	txa
 	pha
 	tya
 	pha
