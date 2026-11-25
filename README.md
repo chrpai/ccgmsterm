@@ -1,10 +1,11 @@
 # CCGMS *Future*
 
-*Commodore Color Graphics Manipulation System Terminal*<br/>*by Craig Smith (1985-1988), alwyz (2017-2020), Michael Steil (2022)*
+*Commodore Color Graphics Manipulation System Terminal*<br/>*by Craig Smith (1985-1988), alwyz (2017-2020), Michael Steil (2022), Chris Painter (2026)*
 
 * based on 5.5 source by [Craig Smith](https://github.com/spathiwa) 01/1988.
 * 2017-2021 mods by [alwyz](http://1200baud.wordpress.com) (see [ccgmsterm2021](https://github.com/mist64/ccgmsterm/tree/ccgmsterm2021) for final alwyz version)
-* fixes and additions by [Michael Steil](https://www.pagetable.com/), 2022 
+* fixes and additions by [Michael Steil](https://www.pagetable.com/), 2022
+* Ultimate, ANSI 80 and speed additions by [Chris Painter](https://github.com/chrpai), 2026
 
 ![](ccgms_40.png) ![](ccgms_80.png)
 
@@ -12,13 +13,17 @@
 
 * 40 column color mode
 * 80 column color mode 🔴
+* 80 column ANSI mode with a CP437 font, for PC-style ANSI BBSes 🔴
 * PETSCII and ASCII/ANSI encoding
+* Fast text output: about 1,400 B/s at 1 MHz with an REU, and tens of KB/s on an accelerated CPU 🔴
 * Serial drivers (stable on NTSC and PAL 🔴)
 	* User Port (300-2400 baud)
 	* UP9600 (300-9600 baud)
 	* SwiftLink $DE00/$DF00/$D700/NMI (300-38400 baud), 57600 on an Ultimate
+	* Ultimate Net: TCP through the Ultimate's network stack, dialed with `ATDT host:port` 🔴
+* Telnet support on Ultimate SwiftLink and Ultimate Net: IAC escaping, option negotiation, and terminal type `ANSI` in ANSI 80 mode 🔴
 * File transfer protocols:
-	* Punter, Multi-Punter
+	* Punter, Multi-Punter (about 16,800 CPS over Ultimate Net at 64 MHz 🔴)
 	* XMODEM, XMODEM-CRC, XMODEM-1K 🔴
 * Phone book with 30 entries and auto-dialer
 * Configuration & phone book load/save (disk or EasyFlash)
@@ -39,7 +44,8 @@
 * [YMODEM](https://github.com/mist64/ccgmsterm/issues/15)/ZMODEM/HMODEM protocols
 * IDE64 compatibility
 * Additional cartridges (e.g. Lt. Kernal)
-* 100% support for [hardware acceleration devices](https://github.com/mist64/ccgmsterm/issues/14) (SuperCPU etc). Certain conditions may affect file transfer handshake timing.
+* 100% support for [hardware acceleration devices](https://github.com/mist64/ccgmsterm/issues/14) (SuperCPU etc). Punter now uses real-time timeouts and works at 64 MHz on an Ultimate, but XMODEM has not had the same pass.
+* Answer mode on Ultimate Net (the Ultimate firmware has no TCP listen)
 
 ## Known Bugs
 
@@ -56,11 +62,24 @@ Regular build:
 
 EasyFlash build:
 
-	EASYFLASH=1 make
+	make EASYFLASH=1
 
-The EasyFlash version gives you the option of loading/saving the phonebook to cart and removes Swiftlink.
+The EasyFlash version gives you the option of loading/saving the phonebook to cart.
 
-In either case, the resulting file will be `build/ccgmsterm.prg`.
+In either case, the resulting file will be `build/ccgmsterm.prg`. Add `EXOMIZER=1` to also get an Exomizer-compressed `build/ccgmsterm-exo.prg`. Exomizer is a git submodule and is built from source on first use.
+
+## Releases
+
+Releases are made by the **Release** workflow in GitHub Actions (Actions > Release > Run workflow). Choose a semver bump (patch, minor, major, or none), or enter an exact version. The workflow updates `VERSION` in `src/ccgmsterm.s`, builds all four variants, commits and tags `v<version>` on main, and publishes a GitHub release with these attached:
+
+| File | Build |
+|---|---|
+| `ccgmsterm-v<version>.prg` | standard |
+| `ccgmsterm-v<version>-exo.prg` | standard, Exomizer compressed |
+| `ccgmsterm-v<version>-easyflash.prg` | EasyFlash |
+| `ccgmsterm-v<version>-easyflash-exo.prg` | EasyFlash, Exomizer compressed |
+
+If `release-notes/v<version>.md` exists on main, it becomes the release notes. Otherwise GitHub generates them from the merged pull requests. The version must fit in 5 characters (for example `1.2.3`) to fit the startup header.
 
 ## Running in VICE
 
@@ -82,11 +101,27 @@ The x64sc command line has changed recently, so these need at least VICE 3.6.
 
 This repository includes automated and manual tests. See [Testing](Testing.md).
 
-## Interals
+## Internals
 
 [Internals](Internals.md).
 
 ## Changelog
+
+### 2026-11-25: Future 0.3.0
+
+* Ultimate support (developed and tested on a C64 Ultimate)
+	* Ultimate detection through the Command Interface
+	* New modem type Ultimate Net: TCP through the Ultimate's network target, with a Hayes emulator so the dialer and phone book work unchanged
+	* 57600 baud for SwiftLink on an Ultimate
+	* IAC Escape option for telnet BBSes, with BINARY/SGA negotiation
+* New 80 column ANSI terminal mode with a CP437 font. F8 now cycles PETSCII 40, ASCII 40, PETSCII 80, ASCII 80 and ANSI 80. The mode is saved in the config. In ANSI 80 mode, telnet terminal type is reported as `ANSI`.
+* Received text prints about 3x faster, with REU DMA or CPU scrolling, whichever is faster
+* Punter
+	* fixed bad blocks above 4 MHz (timeouts now use the jiffy clock)
+	* much faster over Ultimate Net: 1,895 CPS at 16 MHz before, about 16,800 CPS at 64 MHz now
+	* fixed Multi-Punter receive stopping at "Waiting for header..."
+* Fixed an XMODEM hang on Ultimate Net
+* Versions are now semver, and releases are built by a GitHub Actions workflow
 
 ### 2022-03-20: Future 0.2
 

@@ -15,6 +15,7 @@
 ; symbols required by rs232lib
 .export modem_type, baud_rate, is_pal_system	; modem settings
 .export telnet_iac, is_ultimate			; telnet IAC on Ultimate
+.export telnet_term_type			; telnet TERMINAL-TYPE name
 .import net_detect, net_available		; Ultimate Net modem type
 .export ribuf, revtabup				; buffer, temp storage
 
@@ -24,8 +25,9 @@
 .import col80_active, col80_bg_update
 .import col80_read_scr_chr, col80_read_scr_col
 .export locat, nlocat   ; for 80col
+.export ansi80_active, ansi80_bsout
 
-.define VERSION "0.3"
+.define VERSION "0.3.0"
 
 	.include "declare.inc"
 	.include "encoding.inc"
@@ -52,6 +54,7 @@ next_line:
 	.include "banner.s"
 	.include "dir.s"
 	.include "ansi.s"
+	.include "ansi80.s"
 	.include "cursor.s"
 	.include "fastprint.s"
 	.include "input.s"

@@ -1,18 +1,39 @@
 name: Release
 
-# Push a version tag (git tag v0.3 && git push origin v0.3) to build the
-# standard PRG and publish a GitHub release with it attached.
-# Tags with a hyphen (v0.3-rc1) are marked as pre-releases.
+# Run this from the Actions tab ("Release" > "Run workflow"). It bumps
+# VERSION in src/ccgmsterm.s, builds all four variants, commits the bump to
+# main, tags it v<version>, and publishes a GitHub release with these attached:
+#   ccgmsterm-v<version>.prg                  standard
+#   ccgmsterm-v<version>-exo.prg              standard, Exomizer compressed
+#   ccgmsterm-v<version>-easyflash.prg        EasyFlash
+#   ccgmsterm-v<version>-easyflash-exo.prg    EasyFlash, Exomizer compressed
+#
+# Release notes: if release-notes/v<version>.md exists on main it is used,
+# otherwise GitHub generates notes from the merged pull requests.
 on:
-  push:
-    tags: ['v*']
-
-concurrency:
-  group: release-${{ github.ref }}
-  cancel-in-progress: false
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: Which part of the version to increment ("none" releases the version already in src/ccgmsterm.s)
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+          - none
+        default: patch
+      version:
+        description: Exact version to release, such as 1.0.0 (overrides bump; leave empty to use bump)
+        type: string
+        required: false
+        default: ''
 
 permissions:
   contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
 
 jobs:
   release:
@@ -21,12 +42,56 @@ jobs:
     timeout-minutes: 15
 
     steps:
-      # The Makefile's `all` target always builds exomizer, so the submodule
-      # is still needed even though only the uncompressed PRG is shipped.
-      - name: Check out (with exomizer submodule)
+      # exomizer is a submodule and is built from source by the Makefile.
+      - name: Check out main (with exomizer submodule)
         uses: actions/checkout@v7
         with:
+          ref: main
           submodules: true
+          fetch-depth: 1
+
+      - name: Work out the version
+        id: version
+        env:
+          BUMP: ${{ inputs.bump }}
+          EXPLICIT: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          cur=$(sed -n 's/^\.define VERSION "\(.*\)"/\1/p' src/ccgmsterm.s)
+          [ -n "$cur" ] || { echo "::error::No .define VERSION found in src/ccgmsterm.s"; exit 1; }
+          # Accept an old two-part version such as 0.3 as 0.3.0.
+          [[ "$cur" =~ ^[0-9]+\.[0-9]+$ ]] && cur="$cur.0"
+          if ! [[ "$cur" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+            echo "::error::VERSION \"$cur\" in src/ccgmsterm.s is not MAJOR.MINOR.PATCH"; exit 1
+          fi
+          major=${BASH_REMATCH[1]} minor=${BASH_REMATCH[2]} patch=${BASH_REMATCH[3]}
+
+          explicit="${EXPLICIT#v}"
+          if [ -n "$explicit" ]; then
+            if ! [[ "$explicit" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "::error::Version \"$EXPLICIT\" is not MAJOR.MINOR.PATCH"; exit 1
+            fi
+            new="$explicit"
+          else
+            case "$BUMP" in
+              major) new="$((major+1)).0.0" ;;
+              minor) new="$major.$((minor+1)).0" ;;
+              patch) new="$major.$minor.$((patch+1))" ;;
+              none)  new="$major.$minor.$patch" ;;
+            esac
+          fi
+
+          if [ "${#new}" -gt 5 ]; then
+            echo "::error::Version $new is longer than the 5 characters the startup header has room for"; exit 1
+          fi
+          if git ls-remote --exit-code --tags origin "refs/tags/v$new" >/dev/null; then
+            echo "::error::Tag v$new already exists"; exit 1
+          fi
+
+          sed -i "s/^\.define VERSION \".*\"/.define VERSION \"$new\"/" src/ccgmsterm.s
+          echo "version=$new" >> "$GITHUB_OUTPUT"
+          echo "tag=v$new" >> "$GITHUB_OUTPUT"
+          echo "Releasing $new (was $cur)"
 
       - name: Install cc65
         run: |
@@ -44,31 +109,55 @@ jobs:
           path: build/bin/exomizer
           key: exomizer-${{ runner.os }}-${{ runner.arch }}-${{ steps.exo.outputs.sha }}
 
-      - name: Build CCGMS
-        run: make -j"$(nproc)"
-
-      - name: Check tag against VERSION in src/ccgmsterm.s
+      # Each EasyFlash setting is built once with EXOMIZER=1, which leaves both
+      # the uncompressed build/ccgmsterm.prg and the compressed
+      # build/ccgmsterm-exo.prg, so two builds give all four files.
+      - name: Build all four variants
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
         run: |
-          tag="${GITHUB_REF_NAME#v}"
-          src=$(sed -n 's/^\.define VERSION "\(.*\)"/\1/p' src/ccgmsterm.s)
-          if [ "${tag%%-*}" != "$src" ]; then
-            echo "::warning::Tag $GITHUB_REF_NAME does not match VERSION \"$src\" in src/ccgmsterm.s"
-          fi
-
-      - name: Collect outputs
-        run: |
+          set -euo pipefail
           mkdir -p dist
-          cp build/ccgmsterm.prg "dist/ccgmsterm-${GITHUB_REF_NAME}.prg"
+          for ef in 0 1; do
+            suffix=$([ "$ef" = 1 ] && echo "-easyflash" || true)
+            make -j"$(nproc)" EASYFLASH=$ef EXOMIZER=1
+            cp build/ccgmsterm.prg     "dist/ccgmsterm-$TAG$suffix.prg"
+            cp build/ccgmsterm-exo.prg "dist/ccgmsterm-$TAG$suffix-exo.prg"
+          done
           {
+            echo "### CCGMS Terminal $TAG"
             echo "| file | bytes |"
             echo "|---|---|"
-            echo "| ccgmsterm-${GITHUB_REF_NAME}.prg | $(stat -c%s build/ccgmsterm.prg) |"
+            for f in dist/*.prg; do echo "| $(basename "$f") | $(stat -c%s "$f") |"; done
           } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Commit, tag and push
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+          git add src/ccgmsterm.s
+          # With bump "none" (or an unchanged explicit version) there is
+          # nothing to commit; the tag still goes on main.
+          if ! git diff --cached --quiet; then
+            git commit -m "Release $VERSION"
+          fi
+          git tag -a "$TAG" -m "CCGMS Terminal $TAG"
+          # Push the branch and the tag together, so neither lands without the other.
+          git push --atomic origin HEAD:refs/heads/main "refs/tags/$TAG"
 
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
         run: |
-          flags=(--verify-tag --generate-notes --title "CCGMS Terminal ${GITHUB_REF_NAME}")
-          case "$GITHUB_REF_NAME" in *-*) flags+=(--prerelease) ;; esac
-          gh release create "$GITHUB_REF_NAME" dist/*.prg "${flags[@]}"
+          set -euo pipefail
+          notes=(--generate-notes)
+          if [ -f "release-notes/$TAG.md" ]; then
+            notes=(--notes-file "release-notes/$TAG.md")
+          fi
+          gh release create "$TAG" dist/*.prg \
+            --verify-tag --title "CCGMS Terminal $TAG" "${notes[@]}"

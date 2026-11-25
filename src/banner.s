@@ -112,7 +112,12 @@ print_instr:
 	ldy #>txt_banner2d
 	jsr outstr
 @cont:
-	ldx ascii_mode
+	bit ansi80_active
+	bpl :+
+	lda #<txt_ansi
+	ldy #>txt_ansi
+	bne @3
+:	ldx ascii_mode
 	bne @2
 	lda #<txt_graphics
 	ldy #>txt_graphics
@@ -162,7 +167,15 @@ txt_banner0c:	; 80 col version
 	.byte 0
 txt_banner0d:
 	.byte WHITE
-	.byte " Terminal FUTURE ",VERSION," "
+	; The header row is 40 characters: 19 for the CCGMS! block and 21 here,
+	; which leaves 5 for VERSION (a semver such as "1.2.3").
+	.if .strlen(VERSION) > 5
+	.error "VERSION is too long for the 40 column header (5 characters max)"
+	.endif
+	.byte "Terminal FUTURE ",VERSION
+	.repeat 5 - .strlen(VERSION)
+	.byte " "
+	.endrepeat
 	.byte 0
 
 txt_author:
