@@ -43,6 +43,8 @@ dontdash	= codebuf+$1d	; flag to suppress dashes and colons
 specmode	= codebuf+$1e	; flag to send special start code
 tmark		= codebuf+$1f	; jiffy clock when the wait for a char began
 dmark		= codebuf+$20	; jiffy clock when a delay began
+wpend		= codebuf+$21	; 1: a received block still has to be written
+wsize		= codebuf+$22	; its size
 buffer		= $0400      	; buffer for block
 
 ; The original loops counted polls and CPU cycles, so on an accelerated
@@ -127,6 +129,8 @@ punter_reset:
 	jmp reset	; [XXX remove indirection]
 
 over:
+	ldx #0
+	stx wpend
 	sta pnta
 	tsx
 	stx stack
@@ -350,6 +354,7 @@ receive_block:
 	ST_END pst_delay
 	ldy #CODE_S_B
 	jsr sendcode
+	jsr write_pending
 
 	; EOT?
 	lda endflag
@@ -385,7 +390,7 @@ receive_block:
 	lda #MASK_SYN
 	jsr accept
 	lda stat
-	bne @again	; no -> send "S/B" again
+	jne @again	; no -> send "S/B" again
 
 	lda #10		; retries
 	sta bufcount
@@ -624,6 +629,41 @@ recmodem:
 	rts
 
 ;----------------------------------------------------------------------
+; Write a block that receive left for later. Over Ultimate Net the
+; S/B just queued goes out first (rs232_off sends what is queued), and
+; the next block waits in the Ultimate's TCP buffer during the write.
+write_pending:
+	lda wpend
+	beq @rts
+	lda #0
+	sta wpend
+	lda bufcount
+	pha
+	lda wsize
+	sta bufcount
+	jsr write_block
+	pla
+	sta bufcount
+	jmp reset	; RS232 on again
+@rts:	rts
+
+; write the payload of the block in buffer (bufcount bytes) to the file
+write_block:
+	ST_BEGIN
+	jsr rs232_off
+	ldx #LFN_FILE
+	jsr chkout
+	ldy #POS_PAYLOAD
+:	lda buffer,y
+	jsr chrout
+	iny
+	cpy bufcount
+	bne :-
+	jsr clrchn
+	ST_END pst_disk
+	rts
+
+;----------------------------------------------------------------------
 ; create next data block for transmission
 create_data_block:
 	lda bufidx
@@ -838,19 +878,17 @@ receive:
 	cmp #POS_PAYLOAD
 	beq @skip
 
-	; write to disk
-	ST_BEGIN
-	jsr rs232_off
-	ldx #LFN_FILE
-	jsr chkout
-	ldy #POS_PAYLOAD
-:	lda buffer,y
-	jsr chrout
-	iny
-	cpy bufcount
-	bne :-
-	jsr clrchn
-	ST_END pst_disk
+	; Ultimate Net: write the block after asking for the next one
+	; (see write_pending), so it is on its way while the disk works
+	lda modem_type
+	cmp #MODEM_TYPE_ULTIMATE_NET
+	bne :+
+	lda bufcount
+	sta wsize
+	lda #1
+	sta wpend
+	bne @skip
+:	jsr write_block
 
 @skip:
 	; blocknum (hi) == $FF? then EOT
