@@ -317,76 +317,46 @@ savbuf
 	sta mulcnt
 	lda #2
 	sta filetype
-	jsr dowsfn
-	lda #$36
-	sta $01
-	lda buffst;start of buffer
-	sta $c1;I/O Start Address ($c1 $c2)
+	jsr dowsfn	; LFN_FILE, "NAME,S,W"
+	; Only the KERNAL jump table: a replacement KERNAL (the C64U's
+	; hyperkernal, JiffyDOS, ...) has other code at the ROM's inner
+	; addresses that this used to call ($F3D5, $F624, ...), and froze.
+	jsr open
+	bcs @err
+	ldx #LFN_FILE
+	jsr chkout
+	bcs @err
+	lda buffst
+	pha
 	lda buffst+1
-	sta $c2
-	lda buffer_ptr;end of buffer
-	clc
-	adc #1
-	sta $ae;Tape End Addresses/End of Program ($ae / $af)
-	lda buffer_ptr+1
-	adc #0
-	sta $af
-	lda #$61
-	sta $b9
-	jsr $f3d5;open file on serial bus
-	jsr $f68f;print saving and filename
-	lda $ba
-	jsr $ed0c;send listen to serial bus
-	lda $b9
-	jsr $edb9;LSTNSA. Send LISTEN secondary address to serial bus
-	ldy #0
-	jsr $fb8e;Move the Tape SAVE/LOAD Address into the Pointer at 172 ($ac)
-	lda reu_enabled
-	beq afuckit
-	jsr af624
-	lda #0
-	sta buffst
-	sta buffst+1
-	jmp :+
-afuckit	jsr $f624
-:	php
-	lda #$37
+	pha
+	lda #$36	; the buffer runs under the BASIC ROM
 	sta $01
-	plp
-	bcc bsaved
+@loop:	jsr buffer_get_byte	; A = byte (RAM or REU); STATUS $40 at the end
+	ldx status
+	bne @end
+	jsr chrout
+	jsr $ffe1	; STOP aborts
+	bne @loop
+@end:	lda #$37
+	sta $01
+	pla
+	sta buffst+1
+	pla
+	sta buffst
+	jsr clrchn
+	lda #LFN_FILE
+	jsr close
+	jmp bsaved
+@err:	jsr clrchn
+	lda #LFN_FILE
+	jsr close
 	lda #CR
 	jsr chrout
 	jsr bell
-	lda #0
-	sta buffst
-	sta buffst+1
 	jmp ui_abort
 
 ;----------------------------------------------------------------------
-;reu needs a special save routine cause craig decided to be all fancy with this one :)
-af624	jsr $fcd1	; check the tape read/write pointer
-	bcs @end
-;	lda ($ac),y
-	jsr reuread
-	jsr $eddd	; send a byte to an i/o device over the serial bus
-	jsr $ffe1	; stop. query stop key indicator, at memory address $0091; if pressed, call clrchn and clear keyboard buffer.
-	bne :+
-	jsr $f642
-	lda #0
-	sec
-	rts
-:	inc buffst
-	lda buffst
-	beq :+
-	jsr $fcdb
-	bne af624
-:	inc buffst+1
-	jsr $fcdb;advance tape pointer
-	bne af624
-@end:	jsr $edfe;UNLSTN.
-	jmp $f642
-;----------------------------------------------------------------------
-
 bsaved
 	jsr rs232_on
 	jmp return_to_term

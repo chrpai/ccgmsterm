@@ -110,11 +110,17 @@ ZM_PROBE	= 7
 ZM_SA_RD	= 2	; secondary address for reading a file to send
 .endif	; mulfil type byte: find the type when opening
 ST_RDTMO	= $02	; STATUS: read timeout
-ZM_RDTRY	= 8	; zs_read: give up after this many timeouts in a row
+ST_EOI		= $40	; STATUS: end of file
+ZM_RDTRY	= 8	; zs_read: give up after this many timeouts
+ZM_TALKTRY	= 3	; of them: talk again; then open the file again
+.ifndef ZM_SETTLE
+ZM_SETTLE	= 2	; jiffy ticks to wait before reading the drive
+.endif
 .ifndef ZM_TEST_TMO
-ZM_TEST_TMO	= 0	; 1: fake a timeout at the start of every read but the
-.endif			; first, before any byte moves (tests the retry);
-			; 2: on every try (tests giving up)
+ZM_TEST_TMO	= 0	; 1: fake a timeout at byte 100 of every read but the
+.endif			; first, before that byte moves (tests the retry);
+			; 2: on every try (tests giving up); 3: an early EOI;
+			; 4: until the file is opened again
 
 .segment "ZMODEM"	; runs with the BASIC ROM banked out (see below)
 
@@ -1283,6 +1289,11 @@ zs_file:
 	jsr zs_open
 	bcc :+
 	jmp zm_cant_open
+:	jsr zs_close	; the type is known now: look up the size
+	jsr zs_blocks
+	jsr zs_open
+	bcc :+
+	jmp zm_cant_open
 :	jsr zs_info
 	lda #<zt_offering
 	ldy #>zt_offering
@@ -1722,37 +1733,26 @@ zs_read:
 	lda #0
 	sta zm_rtry
 	jsr rs232_off
+	jsr zm_settle
 	lda #<ZM_BUF
 	sta zm_ptr
 	lda #>ZM_BUF
 	sta zm_ptr+1
-@open:	ldx #LFN_FILE
+	ldx #LFN_FILE
 	jsr chkin
 	lda #0		; STATUS may be stale (rs232_get sets it)
 	sta status
 @loop:
 .if ZM_TEST_TMO
-	lda zm_blen
-	ora zm_blen+1
-.if ZM_TEST_TMO = 1
-	ora zm_rtry
-.endif
-	bne @real
-	lda zm_bpos
-	ora zm_bpos+1
-	ora zm_bpos+2
-	beq @real
-	lda #$42	; what the C64U returned
-	sta status
-	bne @tmo
-@real:
+	jsr zs_test_tmo	; C=1: faked; STATUS set (and a byte read for 3)
+	bcs @got
 .endif
 	jsr getin
-	ldy #0
+@got:	ldy #0
 	sta (zm_ptr),y
 	lda status
 	and #ST_RDTMO	; the drive didn't send the byte in time
-	bne @tmo	; (seen on the C64U's software IEC)
+	jne @tmo	; (seen on the C64U's software IEC)
 	inc zm_ptr
 	bne :+
 	inc zm_ptr+1
@@ -1760,42 +1760,82 @@ zs_read:
 	bne :+
 	inc zm_blen+1
 :	lda status
-	bne @eof
+	bne @st
 	lda zm_blen
 	cmp zm_lim
 	bne @loop
 	lda zm_blen+1
 	cmp zm_lim+1
 	bne @loop
-	beq @done
-	; No byte moved, so the drive still holds it: untalk, wait a moment
-	; and talk again. EOI set with the timeout is not the end of the file.
+	jmp @done
+@st:	and #ST_EOI
+	jeq @eof	; another error: stop there, as before
+	; The end of the file, or a slow drive (the KERNAL takes a late byte
+	; for EOI). It can be the end only in the file's last block.
+	jsr zs_here	; zm_skip = file position after this byte
+	lda zm_minl	; C=0 (zm_minl < zm_skip): in the last block
+	cmp zm_skip
+	lda zm_minl+1
+	sbc zm_skip+1
+	lda zm_minl+2
+	sbc zm_skip+2
+	lda zm_minl+3
+	sbc zm_skip+3
+	jcc @eof
+	; Too early: a slow drive. The KERNAL got the whole byte, and the
+	; drive is still talking, so read on.
+.if ZM_DEBUG
+	jsr zs_dlog_t
+.endif
+	lda #0
+	sta status
+	jmp @loop
+	; A timeout: no byte moved. Talk again; if that doesn't help, the
+	; drive may be stuck in the talk (C64U), so close the file, open it
+	; again and read up to where we were.
 @tmo:
 .if ZM_DEBUG
-	lda status
-	sta zm_dbuf+3
-	lda zm_blen
-	sta zm_dbuf+1
-	lda zm_blen+1
-	sta zm_dbuf+2
-	lda zm_rtry
-	sta zm_dbuf+4
-	lda #'T'	; timeout: bytes lo, hi, ST, try
-	ldx #<zm_dbuf
-	jsr zm_dlog
+	jsr zs_dlog_t
 .endif
 	jsr clrchn
 	inc zm_rtry
 	lda zm_rtry
 	cmp #ZM_RDTRY
 	bcs @fail
-	lda $a2		; 2-3 jiffies
-	clc
-	adc #3
-:	cmp $a2
-	bne :-
-	jmp @open
-@fail:	jsr rs232_on	; a short file must not go out as complete
+	cmp #ZM_TALKTRY+1
+	bcs @reopen
+	jsr zm_settle
+	ldx #LFN_FILE
+	jsr chkin
+	lda #0
+	sta status
+	jmp @loop
+@reopen:
+	jsr zs_close
+	jsr zm_settle
+	jsr zs_open	; (turns the driver on again)
+	bcs @fail
+	jsr rs232_off
+	jsr zm_settle
+	jsr zs_here
+	jsr zs_skip_dec	; zm_skip = zm_bpos + zm_blen
+	ldx #LFN_FILE
+	jsr chkin
+@skip:	lda #0		; (a nonzero STATUS makes the KERNAL return CR)
+	sta status
+	lda zm_skip
+	ora zm_skip+1
+	ora zm_skip+2
+	ora zm_skip+3
+	jeq @loop
+	jsr getin
+	lda status
+	and #ST_RDTMO
+	bne @tmo
+	jsr zs_skip_dec	; an EOI before where we were is a slow drive
+	jmp @skip
+@fail:	jsr clrchn
+	jsr rs232_on	; a short file must not go out as complete
 	jsr zm_canit
 	lda #<zt_read_err
 	ldy #>zt_read_err
@@ -1818,6 +1858,231 @@ zs_read:
 .endif
 	jsr clrchn
 	jmp rs232_on
+
+; Wait 1-2 jiffies before talking to the drive. The C64U's software IEC
+; runs on the Ultimate's CPU, and right after a burst of data to send it
+; can be too slow for the KERNAL's timing (EOI or timeout); Punter reads
+; only after the BBS answered, when that has long gone out.
+zm_settle:
+	lda $a2
+	clc
+	adc #ZM_SETTLE
+:	cmp $a2
+	bne :-
+	rts
+
+; zm_minl = (blocks - 1) * 254 from the directory (0 if not found). An
+; EOI at or before it is a slow drive, not the end of the file.
+zs_blocks:
+	lda #0
+	ldx #3
+:	sta zm_minl,x
+	dex
+	bpl :-
+	jsr rs232_off
+	jsr zm_settle
+	lda #'$'
+	sta inpbuf
+	lda #':'
+	sta inpbuf+1
+	ldx #0
+:	lda zm_name,x
+	sta inpbuf+2,x
+	inx
+	cpx zm_nlen
+	bne :-
+	inx
+	inx
+	txa
+	ldx #<inpbuf
+	ldy #>inpbuf
+	jsr setnam
+	lda #LFN_FILE
+	ldx device_disk
+	ldy #0
+	jsr setlfs
+	jsr open
+	jcs @close
+	ldx #LFN_FILE
+	jsr chkin
+	jcs @close
+	lda #0
+	sta status
+	jsr @get	; load address
+	jsr @get
+@line:	jsr @get	; link
+	sta zm_tmp
+	jsr @get
+	ora zm_tmp
+	jeq @close	; end of the listing
+	jsr @get
+	sta zm_tmp	; blocks
+	jsr @get
+	sta zm_tmp+1
+@q:	jsr @get	; to the opening quote
+	beq @line	; end of the line
+	cmp #'"'
+	bne @q
+	ldx #0
+@nm:	jsr @get
+	beq @line
+	cpx zm_nlen
+	beq @endq
+	cmp zm_name,x
+	bne @rest
+	inx
+	bne @nm
+@endq:	cmp #'"'
+	bne @rest
+	ldy zm_ftype
+	bmi @found	; opened without a type
+@ty:	jsr @get
+	beq @line
+	cmp #' '
+	beq @ty
+	cmp #'*'
+	beq @ty
+	cmp drtype,y
+	beq @found
+@rest:	jsr @get	; to the end of the line
+	bne @rest
+	beq @line
+@found:	lda zm_tmp
+	ora zm_tmp+1
+	beq @close
+	lda zm_tmp	; t = blocks - 1; minl = t * 256 - t * 2
+	sec
+	sbc #1
+	sta zm_minl+1
+	lda zm_tmp+1
+	sbc #0
+	sta zm_minl+2
+	lda zm_minl+1
+	asl
+	sta zm_tmp
+	lda zm_minl+2
+	rol
+	sta zm_tmp+1
+	lda #0
+	rol
+	sta zm_tmp+2
+	lda #0
+	sec
+	sbc zm_tmp
+	sta zm_minl
+	lda zm_minl+1
+	sbc zm_tmp+1
+	sta zm_minl+1
+	lda zm_minl+2
+	sbc zm_tmp+2
+	sta zm_minl+2
+@close:
+.if ZM_DEBUG
+	lda status
+	sta zm_dbuf+1
+	lda zm_tmp
+	sta zm_dbuf+2
+	lda zm_minl+1
+	sta zm_dbuf+3
+	lda zm_minl+2
+	sta zm_dbuf+4
+	lda #'B'	; blocks: ST, blocks lo, minl 1, 2
+	ldx #<zm_dbuf
+	jsr zm_dlog
+.endif
+	jsr clrchn
+	lda #LFN_FILE
+	jsr close
+	jmp rs232_on
+; a listing byte (flags from it); the end or an error closes the listing
+@get:	jsr getin	; (keeps X)
+	pha
+	lda status
+	bne @stop
+	pla		; Z from the byte
+	rts
+@stop:	pla
+	pla
+	pla
+	jmp @close
+
+.if ZM_DEBUG
+zs_dlog_t:
+	lda status
+	sta zm_dbuf+3
+	lda zm_blen
+	sta zm_dbuf+1
+	lda zm_blen+1
+	sta zm_dbuf+2
+	lda zm_rtry
+	sta zm_dbuf+4
+	lda #'T'	; again: bytes lo, hi, ST, tries
+	ldx #<zm_dbuf
+	jmp zm_dlog
+.endif
+
+; zm_skip = zm_bpos + zm_blen + 1 (the position after the byte at zm_ptr)
+zs_here:
+	sec
+	lda zm_bpos
+	adc zm_blen
+	sta zm_skip
+	lda zm_bpos+1
+	adc zm_blen+1
+	sta zm_skip+1
+	lda zm_bpos+2
+	adc #0
+	sta zm_skip+2
+	lda zm_bpos+3
+	adc #0
+	sta zm_skip+3
+	rts
+
+zs_skip_dec:
+	ldx #0
+:	dec zm_skip,x
+	lda zm_skip,x
+	cmp #$ff
+	bne :+
+	inx
+	cpx #4
+	bne :-
+:	rts
+
+.if ZM_TEST_TMO
+; at byte 100 of every read but the file's first: C=1 and STATUS faked
+zs_test_tmo:
+	lda zm_blen
+	cmp #100
+	bne @no
+	lda zm_blen+1
+.if ZM_TEST_TMO = 4
+	bne @no
+	lda zm_rtry
+	cmp #ZM_TALKTRY
+	bcs @no
+.elseif ZM_TEST_TMO <> 2
+	ora zm_rtry
+	bne @no
+.else
+	bne @no
+.endif
+	lda zm_bpos
+	ora zm_bpos+1
+	ora zm_bpos+2
+	beq @no
+.if ZM_TEST_TMO = 3
+	jsr getin	; a byte that comes late: EOI
+	ldx #$40
+.else
+	ldx #$42	; what the C64U returned
+.endif
+	stx status
+	sec
+	rts
+@no:	clc
+	rts
+.endif
 
 ; zm_ptr/zm_n = the next subpacket at zm_pos; reads the file as needed
 zs_fill:
@@ -3065,7 +3330,9 @@ zm_bpos:	.res 4	; send: file position of the buffer
 zm_lim:		.res 2
 zm_eof:		.res 1
 zm_sa:		.res 1
-zm_rtry:	.res 1	; zs_read: timeouts in a row	; secondary address for zm_openinp
+zm_rtry:	.res 1	; zs_read: timeouts
+zm_skip:	.res 4	; zs_read: bytes to skip after opening again
+zm_minl:	.res 4	; send: (blocks - 1) * 254, an EOF at or before it is false	; secondary address for zm_openinp
 .if ZM_DEBUG
 zm_dpos:	.res 1
 zm_dsrc:	.res 1
