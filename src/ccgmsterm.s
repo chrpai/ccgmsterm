@@ -24,6 +24,7 @@
 .import col80_active, col80_bg_update
 .import col80_read_scr_chr, col80_read_scr_col
 .export locat, nlocat   ; for 80col
+.export ansi80_active, ansi80_bsout
 
 .define VERSION "0.3"
 
@@ -52,6 +53,7 @@ next_line:
 	.include "banner.s"
 	.include "dir.s"
 	.include "ansi.s"
+	.include "ansi80.s"
 	.include "cursor.s"
 	.include "fastprint.s"
 	.include "input.s"

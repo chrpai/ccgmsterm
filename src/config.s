@@ -110,6 +110,12 @@ easyflash_use_disk:
 telnet_iac:
 	.byte 0
 
+; terminal mode at the time the config was saved, restored at startup:
+; 0: PETSCII 40, 1: ASCII 40, 2: PETSCII 80, 3: ASCII 80, 4: ANSI 80
+; (appended last, so older config files still load and start in PETSCII 40)
+term_mode:
+	.byte 0
+
 config_data_end:
 ;----------------------------------------------------------------------
 
