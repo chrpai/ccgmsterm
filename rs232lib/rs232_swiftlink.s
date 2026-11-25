@@ -11,9 +11,14 @@
 .include "rs232.inc"		; for MODEM_TYPE_*
 .import ribuf			; external
 .import rs232_rti
+.import telnet_iac		; config: 1 = telnet IAC handling wanted
+.import is_ultimate		; runtime: 1 = Ultimate (UCI) detected
+.import iac_setup, iac_setput, iac_get, iac_on	; shared telnet IAC filter
 
 ; function table for dispatcher
 .export sw_funcs
+.export sw_getraw		; default raw get of the IAC filter
+.export sw_put1			; default raw put of the IAC filter
 
 stopsw	= 1
 startsw	= 0
@@ -33,7 +38,7 @@ sw_funcs:
 	.word sw_setup
 	.word sw_enable
 	.word sw_disable
-	.word sw_getxfer
+	.word iac_get
 	.word sw_putxfer
 	.word sw_dropdtr
 
@@ -125,7 +130,27 @@ sw_setup:
 @de:	lda #$de
 	bne @cont
 @df:	lda #$df
-@cont:	sta sm1+2
+@cont:	pha
+	txa		; X: baud_rate, needed below
+	pha
+; telnet IAC handling is active only on an Ultimate (whose modem
+; emulation is a raw TCP socket) and only when the user enabled it
+	lda #0
+	ldy telnet_iac
+	beq :+
+	ldy is_ultimate
+	beq :+
+	lda #$80
+:	ldx #<sw_put1
+	ldy #>sw_put1
+	jsr iac_setput
+	ldx #<sw_getraw
+	ldy #>sw_getraw
+	jsr iac_setup
+	pla
+	tax
+	pla
+	sta sm1+2
 	sta sm2+2
 	sta sm3+2
 	sta sm4+2
@@ -194,7 +219,19 @@ sm19:	sta sw_ctrl
 	rts
 
 ;----------------------------------------------------------------------
+; send byte
+; In telnet IAC mode, a $FF data byte is sent as $FF $FF (RFC 854).
 sw_putxfer:
+	jsr sw_put1
+	cmp #$ff
+	bne :+
+	bit iac_on
+	bpl :+
+	jsr sw_put1
+:	clc
+	rts
+
+sw_put1:
 	pha
 sm20:	lda sw_cmd
 	sta temp
@@ -207,7 +244,6 @@ temp=*+1
 	lda #0		; restore rts state
 sm22:	sta sw_cmd
 	pla
-	clc
 	rts
 
 ;----------------------------------------------------------------------
@@ -225,8 +261,8 @@ sm25:	sta sw_cmd
 	rts
 
 ;----------------------------------------------------------------------
-; get byte from serial interface
-sw_getxfer:
+; get byte from serial interface (the IAC filter in rs232_iac.s calls this)
+sw_getraw:
 	ldx rhead
 	cpx rtail
 	beq @1		; skip (empty buffer, return with carry set)
@@ -250,8 +286,10 @@ sw_getxfer:
 paused:
 	.byte 0
 
+
 ;----------------------------------------------------------------------
 ; MOS 6551 ACIA baud rate constants
+SW_BAUD_EXT	= %10000	; rate bits 0000: external clock (Ultimate: top speed)
 SW_BAUD_50	= %10001
 SW_BAUD_75	= %10010
 SW_BAUD_109_92	= %10011
@@ -278,5 +316,9 @@ swbaud:
 	.byte SW_BAUD_4800	; 4800
 	.byte SW_BAUD_9600	; 9600
 	.byte SW_BAUD_19200	; 38400
+; Rate bits 0000 select the external clock on a real 6551, so this is
+; only valid on an Ultimate, whose ACIA emulation runs at its fastest
+; pace for it. The caller is responsible for not selecting it elsewhere.
+	.byte SW_BAUD_EXT	; 57600 (Ultimate only)
 
-	.byte $10,$10,$10	; [XXX unused]
+	.byte $10,$10		; [XXX unused]

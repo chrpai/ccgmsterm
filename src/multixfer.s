@@ -209,6 +209,7 @@ mlrwat
 	cpx #SHFLAG_CBM
 	beq mulab2
 	jsr rs232_get
+	bcs mlrwat	; no byte (A is not 0 then, it's left as it was)
 	cmp #9		; ctrl-i
 	bne mlrwat
 mlrwt2
@@ -216,6 +217,7 @@ mlrwt2
 	cpx #SHFLAG_CBM
 	beq mulab2
 	jsr rs232_get
+	bcs mlrwt2	; no byte (A is not 0 then, it's left as it was)
 	cmp #0
 	beq mlrwt2
 	cmp #9		; ctrl-i
@@ -226,6 +228,7 @@ mlrflp
 	cpx #SHFLAG_CBM
 	beq mulab2
 	jsr rs232_get
+	bcs mlrflp	; no byte (A is not 0 then, it's left as it was)
 	cmp #0
 	beq mlrflp
 mlrfl1

@@ -89,11 +89,14 @@ f7chgk
 	jmp @reset
 @inc:	inc baud_rate
 	lda baud_rate
-	cmp #BAUD_38400+1
-	bne :+
+	cmp #BAUD_57600
+	bcc @open	; up to 38400: always fine
+	bne @reset	; past 57600: wrap around
+	jsr ultimate_swiftlink	; 57600: Ultimate + SwiftLink only
+	bcs @open
 @reset:	lda #BAUD_300
 	sta baud_rate
-:	jsr rsopen	;5-16 add failsafe....
+@open:	jsr rsopen	;5-16 add failsafe....
 	jmp config_loop
 @no2:
 
@@ -155,7 +158,12 @@ f7chgk
 	bcc @incmod
 	jmp @mod2
 @mod1:	pla
-	cmp #5		; max # of modems
+	ldx net_available
+	beq :+
+	cmp #MODEM_TYPE_ULTIMATE_NET+1	; Ultimate Net only with an Ultimate
+	bcc @incmod
+	bcs @mod2
+:	cmp #MODEM_TYPE_ULTIMATE_NET	; max # of modems
 	bcc @incmod
 @mod2:	lda #0
 	sta modem_type
@@ -165,6 +173,18 @@ f7chgk
 	jsr rsopen
 	jmp config_loop
 @no7:
+
+; I: IAC escape (telnet; Ultimate + SwiftLink only)
+	cmp #'I'
+	bne @no13
+	jsr ultimate_swiftlink
+	bcc :+
+	lda telnet_iac
+	eor #1
+	sta telnet_iac
+	jsr rsopen
+:	jmp config_loop
+@no13:
 
 ; P: Protocol
 	cmp #'P'
@@ -241,6 +261,7 @@ op2txt:
 	.byte "Swift / Turbo DE  "
 	.byte "Swift / Turbo DF  "
 	.byte "Swift / Turbo D7  "
+	.byte "Ultimate Net      "
 
 op6txt:
 	.byte "Standard"
@@ -357,8 +378,49 @@ f7parm:
 	ldy #5
 	jsr prmclc
 	ldx easyflash_use_disk
-	jmp prmprt
+	jsr prmprt
+:	jmp print_iac
+
+;----------------------------------------------------------------------
+; C=1: running on an Ultimate with a SwiftLink or Ultimate Net modem type
+; (all types from MODEM_TYPE_SWIFTLINK_DE up; baud does not matter for Net).
+; Gates the telnet IAC option and the 57600 baud setting.
+ultimate_swiftlink:
+	lda is_ultimate
+	beq :+
+	lda modem_type
+	cmp #MODEM_TYPE_SWIFTLINK_DE	; C=1 for all SwiftLink types
+	rts
+:	clc
+	rts
+
+; 57600 is only valid on an Ultimate with a SwiftLink modem type.
+; Drop a saved or leftover 57600 back to 38400 anywhere else.
+; (clobbers A)
+baud_failsafe:
+	lda baud_rate
+	cmp #BAUD_57600
+	bcc :+		; up to 38400: fine
+	bne @fix	; out of range
+	jsr ultimate_swiftlink
+	bcs :+
+@fix:	lda #BAUD_38400
+	sta baud_rate
 :	rts
+
+; print telnet IAC state on the duplex line
+print_iac:
+	jsr ultimate_swiftlink	; (clobbers A)
+	lda #<txt_iac_na
+	ldy #>txt_iac_na
+	bcc @print
+	lda #<txt_iac_off
+	ldy #>txt_iac_off
+	ldx telnet_iac
+	beq @print
+	lda #<txt_iac_on
+	ldy #>txt_iac_on
+@print:	jmp outstr
 
 ;----------------------------------------------------------------------
 txt_cmd_scratch:
@@ -383,7 +445,7 @@ txt_settings_menu:
 tcol27a	.byte WHITE
 	.byte " ",HILITE,"auto-Dialer/Phonebook",CR,CR
 	.byte " ",HILITE,"baud Rate   -",CR,CR
-	.byte " ",HILITE,"duplex      -",CR,CR
+	.byte " ",HILITE,"duplex      -      ",HILITE,"iac Escape:",CR,CR
 	.byte " ",HILITE,"modem Type  -",CR,CR
 	.byte " ",HILITE,"f"
 tcol27b	.byte " "
@@ -405,6 +467,13 @@ txt_press_return_to_abort:
 
 txt_return:
 	.byte SETCSR,22,7,CYAN,"RETURN",CR,0
+
+txt_iac_on:
+	.byte SETCSR,6,36,WHITE,"On ",0
+txt_iac_off:
+	.byte SETCSR,6,36,WHITE,"Off",0
+txt_iac_na:
+	.byte SETCSR,6,36,WHITE,"N/A",0
 SET_ASCII
 
 ;----------------------------------------------------------------------
@@ -416,4 +485,5 @@ baudrates:
 	.word 9600
 	.word 19200
 	.word 38400
+	.word 57600
 

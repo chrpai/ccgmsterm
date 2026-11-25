@@ -6,3 +6,4 @@
 build
 test/slowout
 test/xmodem
+__pycache__/

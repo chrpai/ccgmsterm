@@ -4,6 +4,12 @@ EXOMIZER ?= 0
 AUTOMATION ?= 0
 DEFAULT_DRIVER ?= 0
 DEFAULT_BAUDRATE ?= 2400
+# NET_STATS=1: Ultimate Net shows debug counters after NO CARRIER
+NET_STATS ?= 0
+NET_DEFS := $(if $(filter 1,$(NET_STATS)),-DNET_STATS=1)
+# PUNTER_STATS=1: Punter downloads print where the time went
+PUNTER_STATS ?= 0
+PUNTER_DEFS := $(if $(filter 1,$(PUNTER_STATS)),-DPUNTER_STATS=1)
 
 EXO_PATH := build/bin/exomizer
 EXO_ARGS := sfx sys -q -n -T4 -M256 -Di_perf=2
@@ -18,7 +24,7 @@ endif
 all: $(EXO_PATH)
 	make build/rs232.lib
 
-	ca65 -g src/ccgmsterm.s -o build/ccgmsterm.o -DEASYFLASH=$(EASYFLASH) -DAUTOMATION=$(AUTOMATION) -DDEFAULT_DRIVER=$(DEFAULT_DRIVER) -DDEFAULT_BAUDRATE=$(DEFAULT_BAUDRATE)
+	ca65 -g src/ccgmsterm.s -o build/ccgmsterm.o -DEASYFLASH=$(EASYFLASH) -DAUTOMATION=$(AUTOMATION) -DDEFAULT_DRIVER=$(DEFAULT_DRIVER) -DDEFAULT_BAUDRATE=$(DEFAULT_BAUDRATE) $(PUNTER_DEFS)
 
 	ca65 -g src/80columns.s -o build/80columns.o -DEASYFLASH=$(EASYFLASH)
 	ca65 -g src/charset.s -o build/charset.o -DEASYFLASH=$(EASYFLASH)
@@ -41,13 +47,15 @@ $(EXO_PATH):
 	$(MAKE) -C exomizer/src CFLAGS="-Wall -Wstrict-prototypes -pedantic -O3"
 	cp exomizer/src/exomizer build/bin
 
-build/rs232.lib: rs232lib/c64.inc rs232lib/rs232.inc rs232lib/rs232_kernal.inc rs232lib/rs232.s rs232lib/rs232_swiftlink.s rs232lib/rs232_up9600.s rs232lib/rs232_userport.s
+build/rs232.lib: rs232lib/c64.inc rs232lib/rs232.inc rs232lib/rs232_kernal.inc rs232lib/rs232.s rs232lib/rs232_swiftlink.s rs232lib/rs232_up9600.s rs232lib/rs232_userport.s rs232lib/rs232_iac.s rs232lib/rs232_ultimate_net.s
 	mkdir -p build
 	ca65 -g rs232lib/rs232.s -o build/rs232.o
 	ca65 -g rs232lib/rs232_userport.s -o build/rs232_userport.o
 	ca65 -g rs232lib/rs232_up9600.s -o build/rs232_up9600.o
 	ca65 -g rs232lib/rs232_swiftlink.s -o build/rs232_swiftlink.o
-	ar65 a build/rs232.lib build/rs232.o build/rs232_userport.o build/rs232_up9600.o build/rs232_swiftlink.o
+	ca65 -g rs232lib/rs232_iac.s -o build/rs232_iac.o
+	ca65 -g rs232lib/rs232_ultimate_net.s -o build/rs232_ultimate_net.o $(NET_DEFS)
+	ar65 a build/rs232.lib build/rs232.o build/rs232_userport.o build/rs232_up9600.o build/rs232_swiftlink.o build/rs232_iac.o build/rs232_ultimate_net.o
 
 build/disk.d64:
 	c1541 -format ccgms,fu d64 build/disk.d64

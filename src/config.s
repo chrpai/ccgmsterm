@@ -104,6 +104,12 @@ theme:
 easyflash_use_disk:
 	.byte 0
 
+; telnet IAC handling ($FF doubling) for the Ultimate's modem emulation;
+; only used on an Ultimate with a SwiftLink modem type.
+; (appended last, so older, shorter config files still load)
+telnet_iac:
+	.byte 0
+
 config_data_end:
 ;----------------------------------------------------------------------
 
