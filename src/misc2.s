@@ -33,6 +33,8 @@ txt_graphics:
 	.byte LTGREEN,"PETSCII",0
 txt_ascii:
 	.byte CYAN,"ASCII",0
+txt_ansi:
+	.byte LTRED,"ANSI",0
 txt_terminal_ready:
 	.byte " Mode Ready.",LTGRAY,CR,CR,0
 txt_disconnecting:

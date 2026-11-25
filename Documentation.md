@@ -207,7 +207,9 @@ Prints some additional keyboard commands as well as the license of the software.
 
 ## Cycle Terminal Mode
 
-`F8` cycles between 80/40 columns mode and PETSCII/ASCII encoding.
+`F8` cycles through the terminal modes: PETSCII 40, ASCII 40, PETSCII 80, ASCII 80, ANSI 80, and back to PETSCII 40.
+
+Saving the config (`F7`, `S`) also saves the current terminal mode, and CCGMS starts in that mode. Config files from older versions start in PETSCII 40 as before.
 
 ### Columns
 
@@ -228,6 +230,39 @@ Prints some additional keyboard commands as well as the license of the software.
 | CTRL K              | $0b  | Cursor off                           |
 
 * ASCII mode uses the standard-ASCII character encoding and supports *some* ANSI control sequences.
+
+### ANSI 80
+
+ANSI 80 is meant for PC-style ANSI BBSes. It uses 80 columns with the full 256 character PC (CP437) font, and every 8x8 cell (two characters) has its own foreground and background color. Two neighboring characters share their colors, which is a VIC-II limit; blank characters and full blocks only need one of the two colors, so they mix with their neighbor more often.
+
+Supported sequences (`ESC [` ...):
+
+| Sequence | Description |
+|----------|-------------|
+| `H` `f`  | cursor position (row;col) |
+| `A` `B` `C` `D` | cursor up/down/right/left |
+| `E` `F` `G` `d` | next/previous line, column, row |
+| `s` `u`, `ESC 7` `ESC 8` | save/restore cursor |
+| `6n` | report the cursor position (`ESC [ row ; col R`), `5n` answers `ESC [ 0 n` |
+| `J` | erase below (0), above (1), screen and home (2) |
+| `K` | erase to end (0), to start (1), whole line (2) |
+| `X` | erase characters |
+| `L` `M` | insert/delete lines; `ESC [ M` without a number starts ANSI music |
+| `S` `T` | scroll up/down |
+| `@` `P` | insert/delete characters |
+| `m` | 0 reset, 1 bright, 4 underline, 5/6 blink, 7 reverse, 22/24/25/27 off, 30-37, 39, 40-47, 49 |
+
+Private and unknown sequences (`ESC [ ? 7 h`, `ESC [ ? 25 l`, ...) and ANSI music (`ESC [ M`, `ESC [ N`, `ESC [ |` up to CTRL-N) are ignored without printing anything. Lines wrap after column 80 only when the next character arrives, and CR and LF are separate (LF alone keeps the column).
+
+Keys: the cursor keys send `ESC [ A`-`D`, HOME sends `ESC [ H`, CLR (`SHIFT` `HOME`) sends `ESC [ K` (End), INST sends `ESC [ @`, DEL sends backspace (8), and `CTRL` `:` sends ESC. The function keys stay CCGMS commands.
+
+With telnet IAC handling on (Ultimate), ANSI 80 accepts the telnet TERMINAL-TYPE option and reports `ANSI`, so BBSes that ask can detect ANSI without a prompt. The other modes refuse the option, as before.
+
+The buffer stores the raw bytes in this mode. Saving such a buffer adds `.ans` to the file name, loading a `.ans` file marks the buffer as ANSI, and viewing an ANSI buffer switches to ANSI 80 and plays it through the ANSI parser.
+
+Blinking text blinks about three times a second while the terminal waits for input. Like the colors, blinking is per cell, so a blinking character can make its neighbor blink too. (`a80_ice` in `src/ansi80.s` switches blink to a bright background instead, for "iCE color" art; there is no menu option for it yet.)
+
+The colors are one table, `ansi80_colors` in `src/ansi80.s`.
 
 ## Multi-Upload
 

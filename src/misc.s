@@ -38,8 +38,28 @@ dodir:
 handle_f8_switch_term:
 	ldx SHFLAG
 	cpx #SHFLAG_CBM
-	jeq cf7_screen_to_buffer
-
+	bne :+
+	bit ansi80_active	; the ANSI screen has no text copy to read
+	jpl cf7_screen_to_buffer
+	jmp term_mainloop
+:
+; PETSCII 40 -> ASCII 40 -> PETSCII 80 -> ASCII 80 -> ANSI 80 -> PETSCII 40
+	bit ansi80_active
+	bpl @noansi
+	jsr ansi80_leave	; ANSI 80 -> PETSCII 40
+	lda #0
+	sta ascii_mode
+	jsr col80_set_charset
+	jsr term80_toggle
+	jmp @done
+@noansi:
+	lda ascii_mode
+	beq @old
+	bit col80_enabled
+	bpl @old
+	jsr ansi80_enter	; ASCII 80 -> ANSI 80
+	jmp @done
+@old:
 	lda ascii_mode
 	eor #1
 	sta ascii_mode
@@ -48,7 +68,8 @@ handle_f8_switch_term:
 	plp
 	bne :+
 	jsr term80_toggle
-:	jsr bell
+:
+@done:	jsr bell
 	jmp term_entry
 
 ;----------------------------------------------------------------------

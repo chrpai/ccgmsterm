@@ -10,8 +10,12 @@
 ; BINARY and SGA are accepted both ways, ECHO from the server, and
 ; every other option is refused. iac_offer asks for BINARY and SGA.
 ;
+; TERMINAL-TYPE (RFC 1091) is accepted when telnet_term_type has a name
+; for the current terminal mode, and SEND is answered with that name.
+;
 
 .import sw_getraw, sw_put1
+.import telnet_term_type	; C=1: no terminal type, else A/Y = ASCII name, 0-terminated
 
 .export iac_setup, iac_setput, iac_offer, iac_get, iac_on, iac_state
 
@@ -26,12 +30,18 @@ SE	= $f0
 OPT_BINARY	= 0
 OPT_ECHO	= 1
 OPT_SGA		= 3
+OPT_TTYPE	= 24
+
+TTYPE_IS	= 0
+TTYPE_SEND	= 1
 
 ; option bits in iac_we/iac_they
 BIT_BINARY	= 1
 BIT_SGA		= 2
 BIT_ECHO	= 4
-LOCAL_OK	= BIT_BINARY|BIT_SGA		; we agree to do these
+BIT_TTYPE	= 8
+LOCAL_OK	= BIT_BINARY|BIT_SGA|BIT_TTYPE	; we agree to do these
+					; (TTYPE only if we have a name)
 REMOTE_OK	= BIT_BINARY|BIT_SGA|BIT_ECHO	; the server may do these
 
 .segment "RS232"
@@ -112,13 +122,21 @@ iac_get1:
 	beq @s3
 ; state 4: inside subnegotiation, after IAC
 	cmp #$f0	; SE
-	beq @to0
+	beq @se
 	lda #3		; anything else (incl. escaped $FF): still in SB
 	bne @next
+@se:	jsr iac_sb_done
+	jmp @to0
 ; state 3: inside subnegotiation
 @s3:	cmp #$ff
-	bne @iac
-	lda #4
+	beq :+
+	ldx iac_sbn	; remember the option and the first parameter
+	cpx #2
+	bcs @iac
+	sta iac_sb,x
+	inc iac_sbn
+	bne @iac	; always
+:	lda #4
 	bne @next
 ; state 2: option byte after WILL/WONT/DO/DONT
 @s2:	sta iac_opt
@@ -132,6 +150,8 @@ iac_get1:
 	bcs @opt	; WILL/WONT/DO/DONT
 	cmp #$fa
 	bne @to0	; other 2-byte command
+	lda #0
+	sta iac_sbn
 	lda #3		; SB
 	bne @next
 @opt:	sta iac_cmd
@@ -167,6 +187,12 @@ iac_option:
 	lda iac_mask
 	and #LOCAL_OK
 	beq @wont
+	cmp #BIT_TTYPE
+	bne :+
+	jsr telnet_term_type	; a terminal type only if we have a name
+	bcs @wont
+	lda #BIT_TTYPE
+:
 	and iac_we
 	bne @rts		; already on
 	lda iac_mask
@@ -222,6 +248,55 @@ iac_send:
 	lda iac_opt
 	jmp iac_put
 
+;----------------------------------------------------------------------
+; end of a subnegotiation: answer TERMINAL-TYPE SEND with
+; IAC SB TERMINAL-TYPE IS <name> IAC SE
+iac_sb_done:
+	lda iac_sbn
+	cmp #2
+	bcc @rts
+	lda iac_sb
+	cmp #OPT_TTYPE
+	bne @rts
+	lda iac_sb+1
+	cmp #TTYPE_SEND
+	bne @rts
+	lda iac_we
+	and #BIT_TTYPE
+	beq @rts	; we never agreed
+	jsr telnet_term_type
+	bcc :+
+	lda #<ttype_unknown	; (the mode changed since): a generic name
+	ldy #>ttype_unknown
+:	sta @name+1
+	sty @name+2
+	lda #IAC
+	jsr iac_put
+	lda #SB
+	jsr iac_put
+	lda #OPT_TTYPE
+	jsr iac_put
+	lda #TTYPE_IS
+	jsr iac_put
+	ldx #0
+@loop:	stx iac_sbn	; [reused as the index]
+@name:	lda $ffff,x
+	beq @end
+	jsr iac_put
+	ldx iac_sbn
+	inx
+	bne @loop
+@end:	lda #IAC
+	jsr iac_put
+	lda #SE
+	jsr iac_put
+	lda #0
+	sta iac_sbn
+@rts:	rts
+
+ttype_unknown:
+	.byte "UNKNOWN", 0
+
 ; A = option bit of iac_opt, 0 for any other option
 opt_bit:
 	lda iac_opt
@@ -230,7 +305,11 @@ opt_bit:
 	beq @sga
 	cmp #OPT_ECHO
 	beq @echo
+	cmp #OPT_TTYPE
+	beq @ttype
 	lda #0
+	rts
+@ttype:	lda #BIT_TTYPE
 	rts
 @bin:	lda #BIT_BINARY
 	rts
@@ -252,3 +331,5 @@ iac_y:		.byte 0	; caller's Y
 iac_mask:	.byte 0
 iac_we:		.byte 0	; options we have on
 iac_they:	.byte 0	; options the server has on
+iac_sbn:	.byte 0	; bytes of the subnegotiation seen so far (up to 2)
+iac_sb:		.byte 0, 0	; option, first parameter

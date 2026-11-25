@@ -13,6 +13,8 @@
 invert_csr_char:
 	bit col80_active
 	bpl :+
+	bit ansi80_active
+	jmi ansi80_csr_on
 	jmp col80_invert
 
 :	jsr calc_scr_ptr
@@ -30,6 +32,8 @@ invert_csr_char:
 restore_csr_char:
 	bit col80_active
 	bpl :+
+	bit ansi80_active
+	jmi ansi80_csr_off
 	jmp col80_restore
 
 :	jsr calc_scr_ptr
