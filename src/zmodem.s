@@ -109,6 +109,12 @@ ZM_PROBE	= 7
 .ifndef ZM_SA_RD
 ZM_SA_RD	= 2	; secondary address for reading a file to send
 .endif	; mulfil type byte: find the type when opening
+ST_RDTMO	= $02	; STATUS: read timeout
+ZM_RDTRY	= 8	; zs_read: give up after this many timeouts in a row
+.ifndef ZM_TEST_TMO
+ZM_TEST_TMO	= 0	; 1: fake a timeout at the start of every read but the
+.endif			; first, before any byte moves (tests the retry);
+			; 2: on every try (tests giving up)
 
 .segment "ZMODEM"	; runs with the BASIC ROM banked out (see below)
 
@@ -1713,18 +1719,40 @@ zs_drop:
 zs_read:
 	sta zm_lim
 	stx zm_lim+1
+	lda #0
+	sta zm_rtry
 	jsr rs232_off
-	ldx #LFN_FILE
-	jsr chkin
-	lda #0		; STATUS may be stale (rs232_get sets it)
-	sta status
 	lda #<ZM_BUF
 	sta zm_ptr
 	lda #>ZM_BUF
 	sta zm_ptr+1
-@loop:	jsr getin
+@open:	ldx #LFN_FILE
+	jsr chkin
+	lda #0		; STATUS may be stale (rs232_get sets it)
+	sta status
+@loop:
+.if ZM_TEST_TMO
+	lda zm_blen
+	ora zm_blen+1
+.if ZM_TEST_TMO = 1
+	ora zm_rtry
+.endif
+	bne @real
+	lda zm_bpos
+	ora zm_bpos+1
+	ora zm_bpos+2
+	beq @real
+	lda #$42	; what the C64U returned
+	sta status
+	bne @tmo
+@real:
+.endif
+	jsr getin
 	ldy #0
 	sta (zm_ptr),y
+	lda status
+	and #ST_RDTMO	; the drive didn't send the byte in time
+	bne @tmo	; (seen on the C64U's software IEC)
 	inc zm_ptr
 	bne :+
 	inc zm_ptr+1
@@ -1740,6 +1768,38 @@ zs_read:
 	cmp zm_lim+1
 	bne @loop
 	beq @done
+	; No byte moved, so the drive still holds it: untalk, wait a moment
+	; and talk again. EOI set with the timeout is not the end of the file.
+@tmo:
+.if ZM_DEBUG
+	lda status
+	sta zm_dbuf+3
+	lda zm_blen
+	sta zm_dbuf+1
+	lda zm_blen+1
+	sta zm_dbuf+2
+	lda zm_rtry
+	sta zm_dbuf+4
+	lda #'T'	; timeout: bytes lo, hi, ST, try
+	ldx #<zm_dbuf
+	jsr zm_dlog
+.endif
+	jsr clrchn
+	inc zm_rtry
+	lda zm_rtry
+	cmp #ZM_RDTRY
+	bcs @fail
+	lda $a2		; 2-3 jiffies
+	clc
+	adc #3
+:	cmp $a2
+	bne :-
+	jmp @open
+@fail:	jsr rs232_on	; a short file must not go out as complete
+	jsr zm_canit
+	lda #<zt_read_err
+	ldy #>zt_read_err
+	jmp zm_fail
 @eof:	lda #$80
 	sta zm_eof
 @done:
@@ -2914,6 +2974,8 @@ zt_cant_create:
 	.byte "Can't create file, skipped",0
 zt_cant_open:
 	.byte "Can't open file",0
+zt_read_err:
+	.byte "Disk read error",0
 zt_file_done:
 	.byte "File complete",0
 zt_offering:
@@ -3002,7 +3064,8 @@ zm_info:	.res 1
 zm_bpos:	.res 4	; send: file position of the buffer
 zm_lim:		.res 2
 zm_eof:		.res 1
-zm_sa:		.res 1	; secondary address for zm_openinp
+zm_sa:		.res 1
+zm_rtry:	.res 1	; zs_read: timeouts in a row	; secondary address for zm_openinp
 .if ZM_DEBUG
 zm_dpos:	.res 1
 zm_dsrc:	.res 1
