@@ -65,8 +65,9 @@ LF		= $0a
 TXBUF_SIZE	= 128
 CMDBUF_SIZE	= 64
 RESPBUF_SIZE	= 16
-READ_MARGIN	= 16	; ribuf room kept free for NO CARRIER
-READ_MAX	= 255-READ_MARGIN
+READ_MARGIN	= 16	; least ribuf room worth a read
+READ_MAX	= 255	; a read fills ribuf at most (a 255-byte Punter block)
+NC_LEN		= 14	; length of the NO CARRIER text
 READ_AGAIN	= 128	; a read this long is followed by the next one at once
 UCI_TIMEOUT	= 10*60	; jiffies a command may take before it is aborted
 T_CMD		= 0	; jif_t0 slots
@@ -184,6 +185,12 @@ net_getraw:
 :	lda #32
 	sta net_tick
 	jsr net_poll
+	ldx rhead
+	cpx rtail
+	bne @have
+	lda net_ncpend		; NO CARRIER that didn't fit before?
+	beq @none
+	jsr emit_nc
 	ldx rhead
 	cpx rtail
 	beq @none
@@ -511,13 +518,28 @@ net_lost:
 	lda net_sock
 	sta UCI_CMD
 	jsr uci_exec		; (a socket the host closed is gone already)
-	ldx #txt_nocarrier-txt
 .ifdef NET_STATS
-	jsr emit
+	jsr emit_nc
 	jmp st_show
 .else
-	jmp emit
+	jmp emit_nc
 .endif
+
+; NO CARRIER into ribuf if it fits; reads may fill ribuf to the brim,
+; so otherwise it is sent once the program has emptied ribuf
+emit_nc:
+	lda rhead		; room = rhead - rtail - 1
+	clc
+	sbc rtail
+	cmp #NC_LEN
+	bcs :+
+	lda #1
+	sta net_ncpend
+	rts
+:	lda #0
+	sta net_ncpend
+	ldx #txt_nocarrier-txt
+	jmp emit
 
 .ifdef NET_STATS
 ;----------------------------------------------------------------------
@@ -709,6 +731,7 @@ net_open:
 	lda #0
 	sta net_pend
 	sta txlen
+	sta net_ncpend
 	lda #$80
 	sta net_online
 	jsr iac_offer		; telnet: ask for binary mode
@@ -717,8 +740,7 @@ net_open:
 .endif
 	ldx #txt_connect-txt
 	jmp emit
-@fail:	ldx #txt_nocarrier-txt
-	jmp emit
+@fail:	jmp emit_nc
 
 ;======================================================================
 ; Hayes command emulation (command mode)
@@ -884,8 +906,7 @@ at_dial:
 	bne @ploop
 @open:	jmp net_open
 @nohost:
-	ldx #txt_nocarrier-txt
-	jmp emit
+	jmp emit_nc
 
 ; C=0 and A = value if A is a digit
 at_digit:
@@ -1123,6 +1144,7 @@ net_available:	.byte 0	; 1: the UCI network target answered
 net_online:	.byte 0	; bit 7: connected
 net_pend:	.byte 0	; 1: a READ is running
 net_got:	.byte 0	; rtail before a read was collected
+net_ncpend:	.byte 0	; 1: NO CARRIER waits for room in ribuf
 net_stream:	.byte 0	; bit 7: the last read was long, read ahead
 net_off:	.byte 0	; bit 7: disabled, no reads
 net_tick:	.byte 1	; bytes until the connection is serviced

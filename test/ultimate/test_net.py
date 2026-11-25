@@ -201,7 +201,8 @@ data = [i & 255 for i in range(1000)]
 net.remote = list(data)
 got = get_all(m)
 check('receive 1000 bytes', list(got) == data, len(got))
-check('reads fit the buffer', max(net.reads) <= 239, max(net.reads))
+check('reads fit the buffer', max(net.reads) <= 255, max(net.reads))
+check('a 255-byte block comes in one read', 255 in net.reads, net.reads[:6])
 
 net, m = online(busy=200)
 net.remote = list(b"slow")
@@ -339,6 +340,21 @@ call(m, 'iac_get')      # a read is running now
 call(m, 'net_dropdtr')
 check('hang up closes the socket', net.closes == [5] and get_all(m) == b"\r\nNO CARRIER\r\n"
       and not m.memory[sym['net_online']] & 0x80)
+
+# hang up with ribuf full: NO CARRIER comes after the data
+net, m = online()
+net.remote = [i & 255 for i in range(300)]
+call(m, 'iac_get')      # starts the read
+for i in range(20):     # let it finish and fill ribuf
+    call(m, 'net_poll')
+full = (m.memory[RTAIL] - m.memory[RHEAD]) & 255
+call(m, 'net_dropdtr')
+out = get_all(m)
+check('NO CARRIER waits for room in ribuf', full > 255 - 14 and
+      out.endswith(b"\r\nNO CARRIER\r\n") and out.count(b"NO CARRIER") == 1
+      and list(out[:-14]) == list(range(255)), (full, len(out)))
+put(m, b"AT\r")
+check('back in command mode after a full-buffer hang-up', get_all(m) == b"AT\r\r\nOK\r\n")
 
 net, m = online()
 call(m, 'net_setup', 5)
