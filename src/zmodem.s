@@ -2691,7 +2691,21 @@ zm_dshow:
 	lda zm_dcnt
 	cmp #ZM_DN
 	bne @e
+.if !AUTOMATION
+	ldx #ZM_ROW_ABORT
+	ldy #2
+	jsr zm_at
+	lda #<zt_dkey
+	ldy #>zt_dkey
+	jsr outstr
+	jsr clrchn
+:	jsr getin	; wait for a key (the BBS's text would scroll
+	beq :-		; the log away)
+.endif
 	rts
+SET_PETSCII
+zt_dkey:	.byte "Debug log above. Press a key.",0
+SET_ASCII
 
 zm_dhex:
 	pha
