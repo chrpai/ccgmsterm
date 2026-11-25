@@ -38,7 +38,7 @@ Here are some details that will help with development.
 | $D800-$DFCF | logical 80x25 screen RAM                 |
 | $E000-$FE3F | bitmap                                   |
 
-* 80 column ANSI mode: same bitmap at $E000 and colors at $D400, but each $D400 byte holds (foreground << 4) \| background for its two characters. $D000-$D3FF and $D800-$DFFF are not used; the CP437 font lives in the program.
+* 80 column ANSI mode: same bitmap at $E000 and colors at $D400, but each $D400 byte holds (foreground << 4) \| background for its two characters. $D800-$DBE7 holds the real colors of blinking cells and $DC00-$DFE7 their blink flags; $D000-$D3FF is not used, and the CP437 font lives in the program.
 
 ## Banking
 

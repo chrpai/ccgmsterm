@@ -23,6 +23,10 @@ SET_ASCII
 
 A80_BITMAP	= $e000
 A80_COLOR	= $d400
+; blinking, one byte per color cell, in RAM under I/O that the ANSI mode
+; doesn't otherwise use (80columns.s keeps its text screen there)
+A80_BLON	= $d800	; the cell's real colors
+A80_BLFLAG	= $dc00	; $80 | background color: the cell blinks; 0: it doesn't
 A80_COLS	= 80
 A80_ROWS	= 25
 
@@ -65,6 +69,12 @@ a80_bold:	.byte 0
 a80_blink:	.byte 0
 a80_rev:	.byte 0
 a80_ul:		.byte 0	; underline
+a80_ice:	.byte 0	; 1: blink means bright background (iCE colors) [no UI yet]
+a80_anyblink:	.byte 0	; 1: some cell may blink
+a80_phase:	.byte 0	; 1: blinking cells are hidden right now
+a80_blink_t:	.byte 0	; jiffy clock at the last blink
+a80_chg:	.byte 0
+a80_oflag:	.byte 0
 a80_petc:	.byte $ff	; C64 color set by a PETSCII color code, $ff: none
 a80_fgc:	.byte 15	; effective C64 colors
 a80_bgc:	.byte 0
@@ -185,8 +195,22 @@ a80_draw:
 	A80_RAM_ON
 	ldy #0
 	sty a80_inv
-	lda (a80_col),y
-	sta a80_old
+	sty a80_chg
+	lda a80_col
+	sta a80_src
+	sta a80_dst
+	lda a80_col+1
+	clc
+	adc #>(A80_BLON-A80_COLOR)
+	sta a80_src+1
+	adc #>(A80_BLFLAG-A80_BLON)
+	sta a80_dst+1
+	lda (a80_dst),y
+	bpl :+
+	lda (a80_src),y	; blinking cell: its real colors
+	jmp :++
+:	lda (a80_col),y
+:	sta a80_old
 	cmp a80_cell
 	beq @colors_ok
 	cmp a80_cellsw
@@ -229,11 +253,51 @@ a80_draw:
 	cmp a80_bgc
 	beq @invert
 @set:	lda a80_cell
-	sta (a80_col),y
+	sta a80_old
+	inc a80_chg
 	jmp @colors_ok
 @invert:
 	dec a80_inv	; $ff
 @colors_ok:
+	; blinking: remember the real colors of a blinking cell
+	ldy #0
+	lda a80_blink
+	beq @noblink
+	lda a80_ice
+	bne @noblink
+	lda a80_bgc
+	ora #$80
+	sta (a80_dst),y
+	lda a80_old
+	sta (a80_src),y
+	lda #1
+	sta a80_anyblink
+	bne @write	; always
+@noblink:
+	lda a80_chg	; new colors: the cell stops blinking
+	bne @unblink
+	lda a80_ul
+	bne @unblink
+	lda a80_t1	; a blank keeps the cell blinking
+	beq @write
+	cmp #' '
+	beq @write
+	cmp #$ff
+	beq @write
+@unblink:
+	lda #0
+	sta (a80_dst),y
+@write:	lda (a80_dst),y
+	bpl @shown
+	ldx a80_phase
+	beq @shown
+	and #$0f	; hidden phase: background only
+	tax
+	lda a80_x17,x
+	bne @put	; [not always: black]
+	beq @put
+@shown:	lda a80_old
+@put:	sta (a80_col),y
 	pla		; banking
 	tay
 	pla		; flags from a80_calc_bmp: C = right half
@@ -336,6 +400,22 @@ a80_erase_cells:
 	ldy #0
 	lda a80_cell
 :	sta (a80_col),y
+	iny
+	dex
+	bpl :-
+	lda a80_col	; erased cells don't blink
+	sta a80_dst
+	lda a80_col+1
+	clc
+	adc #>(A80_BLFLAG-A80_COLOR)
+	sta a80_dst+1
+	lda a80_t1
+	sec
+	sbc a80_t0
+	tax
+	ldy #0
+	tya
+:	sta (a80_dst),y
 	iny
 	dex
 	bpl :-
@@ -456,15 +536,26 @@ a80_scroll_up:
 	txa
 	adc #>a80_bm_copy
 	sta a80_bm_jmp+2
-	lda a80_t0	; color: * 6 bytes per row
+	ldx #0		; color and blink: * 18 bytes per row
+	lda a80_t0
 	asl
-	sta a80_t1
 	asl
+	asl
+	asl
+	bcc :+
+	inx
+:	sta a80_t1
+	lda a80_t0
+	asl
+	clc
 	adc a80_t1
+	bcc :+
+	inx
+:	clc
 	adc #<a80_col_copy
 	sta a80_col_jmp+1
-	lda #>a80_col_copy
-	adc #0
+	txa
+	adc #>a80_col_copy
 	sta a80_col_jmp+2
 	A80_RAM_ON
 	ldy #0
@@ -499,6 +590,10 @@ a80_col_copy:
 	.repeat 24, i
 	lda A80_COLOR+(i+1)*40,y
 	sta A80_COLOR+i*40,y
+	lda A80_BLON+(i+1)*40,y
+	sta A80_BLON+i*40,y
+	lda A80_BLFLAG+(i+1)*40,y
+	sta A80_BLFLAG+i*40,y
 	.endrepeat
 	jmp a80_col_next
 
@@ -540,11 +635,22 @@ a80_scroll_down:
 	sta a80_dst
 	lda row40_hi+1,x
 	sta a80_dst+1
-	ldy #39
+	ldx #3		; colors, real colors, blink flags
+@arr:	ldy #39
 :	lda (a80_src),y
 	sta (a80_dst),y
 	dey
 	bpl :-
+	lda a80_src+1
+	clc
+	adc #>(A80_BLON-A80_COLOR)
+	sta a80_src+1
+	lda a80_dst+1
+	clc
+	adc #>(A80_BLON-A80_COLOR)
+	sta a80_dst+1
+	dex
+	bne @arr
 	A80_RAM_OFF
 	lda a80_row
 	beq @clear
@@ -578,6 +684,8 @@ a80_clear_home:
 	lda #0
 	ldx #A80_ROWS-1
 	jsr a80_erase_rows
+	lda #0
+	sta a80_anyblink
 a80_home:
 	lda #0
 	sta a80_x
@@ -677,7 +785,9 @@ a80_sgr_apply:
 	tax
 	lda ansi80_colors,x
 	sta a80_fgc
-	lda a80_blink	; blink -> bright background (iCE colors)
+	lda a80_ice	; iCE colors: blink -> bright background
+	beq :+
+	lda a80_blink
 	beq :+
 	lda #8
 :	ora a80_bg
@@ -1255,10 +1365,9 @@ a80_move_char:
 	beq :+		; lands in a left half
 	ldx a80_mv_shalf
 	beq @pixels	; odd move into a right half: keep the cell colors
-:	ldx a80_mv_dcol
-	stx a80_col
-	ldx a80_mv_dcol+1
-	stx a80_col+1
+:	pha
+	jsr a80_mv_blink
+	pla
 	sta (a80_col),y
 @pixels:
 	ldy #7
@@ -1292,6 +1401,40 @@ a80_move_char:
 	dey
 	bpl @row
 	A80_RAM_OFF
+	rts
+
+; move_char helper: copy the blink state of cell a80_col to a80_mv_dcol,
+; then point a80_col at the destination. Y = 0.
+a80_mv_blink:
+	lda a80_col
+	sta a80_src
+	lda a80_col+1
+	clc
+	adc #>(A80_BLON-A80_COLOR)
+	sta a80_src+1
+	lda (a80_src),y
+	sta a80_t1
+	lda a80_src+1
+	adc #>(A80_BLFLAG-A80_BLON)
+	sta a80_src+1
+	lda (a80_src),y
+	sta a80_oflag
+	ldx a80_mv_dcol
+	stx a80_col
+	stx a80_src
+	ldx a80_mv_dcol+1
+	stx a80_col+1
+	txa
+	clc
+	adc #>(A80_BLON-A80_COLOR)
+	sta a80_src+1
+	lda a80_t1
+	sta (a80_src),y
+	lda a80_src+1
+	adc #>(A80_BLFLAG-A80_BLON)
+	sta a80_src+1
+	lda a80_oflag
+	sta (a80_src),y
 	rts
 
 a80_n:		.byte 0
@@ -1440,6 +1583,72 @@ a80_sd:
 	dec a80_cnt
 	bne :-
 	rts
+
+;----------------------------------------------------------------------
+; Blink: called from the terminal loop. Every 20 jiffies (1/3 s), hide or
+; show the foreground of every blinking cell.
+ansi80_tick:
+	lda a80_anyblink
+	beq @rts
+	lda JIFFIES
+	sec
+	sbc a80_blink_t
+	cmp #20
+	bcc @rts
+	lda JIFFIES
+	sta a80_blink_t
+	lda a80_phase
+	eor #1
+	sta a80_phase
+	A80_RAM_ON
+	lda #<A80_COLOR
+	sta a80_col
+	sta a80_src
+	sta a80_dst
+	lda #>A80_COLOR
+	sta a80_col+1
+	lda #>A80_BLON
+	sta a80_src+1
+	lda #>A80_BLFLAG
+	sta a80_dst+1
+@page:	ldy #0
+@cell:	lda (a80_dst),y
+	bpl @next
+	ldx a80_phase
+	beq @show
+	and #$0f
+	tax
+	lda a80_x17,x
+	jmp @put
+@show:	lda (a80_src),y
+@put:	sta (a80_col),y
+@next:	iny
+	cpy @len
+	bne @cell
+	inc a80_col+1
+	inc a80_src+1
+	inc a80_dst+1
+	dec @pages
+	beq @done
+	lda @pages
+	cmp #1
+	bne :+
+	lda #<(A80_ROWS*40)	; last page: 1000 - 768 cells
+	sta @len
+:	jmp @page
+@done:	lda #4
+	sta @pages
+	lda #0
+	sta @len
+	A80_RAM_OFF
+@rts:	rts
+@pages:	.byte 4
+@len:	.byte 0		; 0: 256
+
+a80_x17:
+	.repeat 16, i
+	.byte i*17
+	.endrepeat
 
 ;----------------------------------------------------------------------
 ; Keyboard: send the key in A (PETSCII) to the modem.

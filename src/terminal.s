@@ -73,7 +73,10 @@ term_skip:
 ;----------------------------------------------------------------------
 ; modem output
 term_loop2:
-	lda buffer_ptr
+	bit ansi80_active
+	bpl :+
+	jsr ansi80_tick	; ANSI 80: blinking text
+:	lda buffer_ptr
 	sta newbuf
 	lda buffer_ptr+1
 	sta newbuf+1

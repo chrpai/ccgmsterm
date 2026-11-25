@@ -250,13 +250,15 @@ Supported sequences (`ESC [` ...):
 | `L` `M` | insert/delete lines; `ESC [ M` without a number starts ANSI music |
 | `S` `T` | scroll up/down |
 | `@` `P` | insert/delete characters |
-| `m` | 0 reset, 1 bright, 4 underline, 5 bright background, 7 reverse, 22/24/25/27 off, 30-37, 39, 40-47, 49 |
+| `m` | 0 reset, 1 bright, 4 underline, 5/6 blink, 7 reverse, 22/24/25/27 off, 30-37, 39, 40-47, 49 |
 
 Private and unknown sequences (`ESC [ ? 7 h`, `ESC [ ? 25 l`, ...) and ANSI music (`ESC [ M`, `ESC [ N`, `ESC [ |` up to CTRL-N) are ignored without printing anything. Lines wrap after column 80 only when the next character arrives, and CR and LF are separate (LF alone keeps the column).
 
 Keys: the cursor keys send `ESC [ A`-`D`, HOME sends `ESC [ H`, CLR (`SHIFT` `HOME`) sends `ESC [ K` (End), INST sends `ESC [ @`, DEL sends backspace (8), and `CTRL` `:` sends ESC. The function keys stay CCGMS commands.
 
 The buffer stores the raw bytes in this mode. Saving such a buffer adds `.ans` to the file name, loading a `.ans` file marks the buffer as ANSI, and viewing an ANSI buffer switches to ANSI 80 and plays it through the ANSI parser.
+
+Blinking text blinks about three times a second while the terminal waits for input. Like the colors, blinking is per cell, so a blinking character can make its neighbor blink too. (`a80_ice` in `src/ansi80.s` switches blink to a bright background instead, for "iCE color" art; there is no menu option for it yet.)
 
 The colors are one table, `ansi80_colors` in `src/ansi80.s`.
 
