@@ -192,7 +192,7 @@ f7chgk
 
 	inc protoc
 	lda protoc
-	cmp #4
+	cmp #PROTOCOL_ZMODEM+1
 	bcc :+
 	lda #0
 	sta protoc
@@ -272,6 +272,7 @@ op3txt:
 	.byte "XMODEM    "
 	.byte "XMODEM-CRC"
 	.byte "XMODEM-1K "
+	.byte "ZMODEM    "
 
 op4txt:
 	.byte "Classic CCGMS v5.5  "

@@ -24,7 +24,7 @@
 
 ## Upload File
 
-`F1` will upload a single file from current drive to the BBS. It will ask for the source filename.
+`F1` will upload a single file from current drive to the BBS. It will ask for the source filename. With ZMODEM, the name is sent along.
 
 ## Send/Read File
 
@@ -35,7 +35,7 @@
 
 ## Download File
 
-`F3` will download a single file from the BBS to the current drive. First, it will ask for the destination filename.  If the [protocol](#protocol) is XMODEM, it will also ask what file type the new file should be: PRG, SEQ or USR.
+`F3` will download a single file from the BBS to the current drive. First, it will ask for the destination filename.  If the [protocol](#protocol) is XMODEM, it will also ask what file type the new file should be: PRG, SEQ or USR. With [ZMODEM](#zmodem), it doesn't ask for a name; the BBS sends the names.
 
 ## Buffer Commands
 
@@ -175,7 +175,7 @@ Turn it off for BBSes that use raw TCP instead of telnet. The setting is saved w
 
 ### Protocol
 
-This configures the protocol to be used for file transmissions. It cycles between Punter and three variants of XMODEM.
+This configures the protocol to be used for file transmissions. It cycles between Punter, three variants of XMODEM, and ZMODEM.
 
 * Punter: This is the "NEW" Punter a.k.a. Punter C1 protocol, which is the standard on many BBSes with a Commodore background.
 * XMODEM: This is a family of protocols mostly used on PC BBSes.
@@ -188,6 +188,7 @@ This configures the protocol to be used for file transmissions. It cycles betwee
 	* XMODEM-1K:
 		* Upload: force 1K blocks, accept checksum or CRC
 		* Download: force CRC, accept 128B or 1K blocks
+* ZMODEM: see [ZMODEM](#zmodem). A ZMODEM download starts by itself whatever protocol is selected.
 
 ### Theme
 
@@ -264,9 +265,28 @@ Blinking text blinks about three times a second while the terminal waits for inp
 
 The colors are one table, `ansi80_colors` in `src/ansi80.s`.
 
+## ZMODEM
+
+ZMODEM is the streaming protocol most PC-style and Amiga BBSes offer. CCGMS supports:
+
+* Download and upload, one file or a batch, with the file names sent by the other side.
+* Auto-start: when the BBS starts a ZMODEM download (it sends `**`, CAN, `B00`), CCGMS switches to a 40 column status screen and starts receiving by itself, in any terminal mode and whatever protocol is selected. `F3` with ZMODEM selected also waits for the BBS to start.
+* CRC-16 and CRC-32. The sender chooses; CCGMS offers CRC-32.
+* Streaming. The sender streams without waiting for a reply after each block, but CCGMS asks it to wait for an acknowledgment every 1 KB. With SwiftLink and Ultimate Net, RS-232 flow control also holds the sender while CCGMS writes to disk. The 1 KB limit matters with a slow drive: a sender that streams the whole file fills the network buffers, runs far ahead of the drive, and can give up waiting for CCGMS to finish the file. Some senders ignore the limit; with `sz` from lrzsz, use `sz -w 2048` on slow drives. The user port drivers can't receive while CCGMS writes to disk; a sender that ignores the limit still works there, but more slowly, because CCGMS has it resend what was missed.
+* Error recovery: a bad block makes CCGMS ask the sender to go back to the last good byte.
+* Resume: if a file with the same name exists and is shorter than the file offered, CCGMS appends the rest (crash recovery). If it is the same size or larger, CCGMS saves the new file under a numbered name such as `NAME-1`. It never overwrites a file.
+
+Received names are converted to PETSCII and cut to 16 characters. Files ending in `.prg` or `.d64` are saved as PRG, everything else as SEQ. Files are saved to the current drive.
+
+When uploading, CCGMS sends the file name in lower case, and adds `.prg` to PRG files whose name has no extension, so a PC can tell what they are. It does not send the file size, which it doesn't know without reading the whole file.
+
+`C=` cancels a transfer. If the disk is full or the drive reports an error, CCGMS cancels the transfer and shows the drive's message.
+
+ZMODEM uses the 1 KB XMODEM buffer at $C800, so it is not affected by the size of the terminal buffer.
+
 ## Multi-Upload
 
-`C=` `F1` uploads one or more file using the Multi-Punter procotol. It will print the directory of the current drive entry by entry and ask for one of the following:
+`C=` `F1` uploads one or more file using the Multi-Punter procotol, or ZMODEM if it is the selected protocol. It will print the directory of the current drive entry by entry and ask for one of the following:
 
 * **Yes**: Upload this file.
 * **No**: Do not upload this file.
@@ -275,11 +295,11 @@ The colors are one table, `ansi80_colors` in `src/ansi80.s`.
 * **Done**: Stop uploading.
 * **All**: Upload all files from here on.
 
-Multi-Punter will also send the name and type of each file.
+Multi-Punter will also send the name and type of each file. ZMODEM sends all files you picked in one batch.
 
 ## Multi-Download
 
-`C=` `F3`  downloads one or more files. For each file, the BBS will send the name, type and file contents, and CCGMS will write the data to the current drive.
+`C=` `F3`  downloads one or more files with Multi-Punter, or ZMODEM if it is the selected protocol. For each file, the BBS will send the name, type and file contents, and CCGMS will write the data to the current drive.
 
 ## Send directory
 

@@ -9,7 +9,7 @@
 ;----------------------------------------------------------------------
 SET_PETSCII
 txt_multixfer:
-	.byte CR,WHITE,"Multi-transfer - Punter only.",CR,0
+	.byte CR,WHITE,"Multi-transfer - Punter/ZMODEM only.",CR,0
 SET_ASCII
 
 ;----------------------------------------------------------------------
@@ -18,6 +18,8 @@ cf1_multi_send:
 	jsr text_color_save
 	lda protoc
 	beq mulsav	; PROTOCOL_PUNTER
+	cmp #PROTOCOL_ZMODEM
+	beq mulsav
 mulnop:
 	lda #<txt_multixfer
 	ldy #>txt_multixfer
@@ -52,6 +54,9 @@ mulsav:
 	bne mlss1	; yes
 mlss0	jmp mlssab	; nope, we are done
 mlss1
+	lda protoc
+	cmp #PROTOCOL_ZMODEM
+	jeq zm_upload_multi_stub
 	lda mulfln
 	sta mulcnt	; how many files to send. decrement until none left
 	beq mlss0
@@ -187,6 +192,8 @@ cf3_multi_receive:
 	jsr text_color_save
 	lda protoc
 	beq mulrav	; PROTOCOL_PUNTER
+	cmp #PROTOCOL_ZMODEM
+	jeq zm_download_stub
 	jmp mulnop
 mulrav
 	jsr supercpu_off

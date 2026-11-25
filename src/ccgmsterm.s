@@ -63,6 +63,7 @@ next_line:
 	.include "macroex.s"
 	.include "buffer2.s"
 	.include "xmodem.s"
+	.include "zmodem.s"
 	.include "xfer.s"
 	.include "disk.s"
 	.include "outstr.s"

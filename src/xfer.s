@@ -33,6 +33,8 @@ ui_prompt_filename:
 	bne @download
 ; upload
 	lda protoc
+	cmp #PROTOCOL_ZMODEM
+	beq @upload_zmodem
 	cmp #PROTOCOL_XMODEM_1K
 	beq @upload_1k
 	; XMODEM or XMODEM-CRC setting:
@@ -45,6 +47,11 @@ ui_prompt_filename:
 	jsr chrout
 	lda #<txt_xmodem_crc
 	ldy #>txt_xmodem_crc
+	jsr outstr
+	jmp @3
+@upload_zmodem:
+	lda #<txt_zmodem
+	ldy #>txt_zmodem
 	jsr outstr
 	jmp @3
 @upload_1k:
@@ -265,6 +272,9 @@ filopn:
 
 ;----------------------------------------------------------------------
 uplok:
+	lda protoc
+	cmp #PROTOCOL_ZMODEM
+	jeq zm_upload_single_stub
 	lda #0
 	jsr ui_setup_xfer_screen
 	jsr clrchn
@@ -317,6 +327,9 @@ handle_f3_download:
 	sta mulcnt
 	jsr text_color_save
 	jsr supercpu_off
+	lda protoc
+	cmp #PROTOCOL_ZMODEM
+	jeq zm_download_stub	; file names come from the sender
 	lda #1
 	jsr ui_prompt_filename
 	jeq ui_abort

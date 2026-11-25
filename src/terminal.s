@@ -265,6 +265,7 @@ term_input_loop:
 	ldx status
 	bne term_loop2b	; = term_loop2
 term_rx_char:	; contn2 comes back here with the next byte
+	jsr zm_detect	; ZMODEM auto-start (keeps A)
 
 .if AUTOMATION	; only enabled for automated tests
 	cmp #3		; code 3 (STOP)
