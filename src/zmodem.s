@@ -95,6 +95,13 @@ ZM_ROW_ERRORS	= 18
 ZM_ROW_MSG	= 20
 ZM_ROW_ABORT	= 22
 
+; ZRINIT buffer size with flow control (SwiftLink, Ultimate Net), in
+; bytes, a multiple of 256; 0: the sender may stream the whole file
+.ifndef ZM_RXWIN
+ZM_RXWIN	= 1024
+.endif
+ZM_PROBE	= 7	; mulfil type byte: find the type when opening
+
 .segment "ZMODEM"	; runs with the BASIC ROM banked out (see below)
 
 ;======================================================================
@@ -119,8 +126,9 @@ zm_download:
 	jmp zr_start
 
 ;----------------------------------------------------------------------
-; F1: the file is open as LFN_FILE, inpbuf/max hold its name and
-; filetype its type (1: PRG, 2: SEQ, 3: USR)
+; F1: inpbuf/max hold the name the user typed. The type is found when
+; the file is opened (F1's own test of ",P"/",S"/",U" with secondary
+; address 0 fails on the Ultimate's software IEC).
 zm_upload_single:
 	jsr zm_dsk_on
 	lda #LFN_FILE
@@ -145,8 +153,7 @@ zm_upload_single:
 	lda inpbuf,x
 	sta mulfil+2,x
 	jmp @cp
-@type:	ldx filetype
-	lda zm_ft2dir,x
+@type:	lda #ZM_PROBE	; type unknown: zs_open finds it
 	sta mulfil+18
 	lda #$80
 	sta mulfil+19
@@ -165,8 +172,6 @@ zm_upload_multi:
 	stx zm_sp
 	jmp zs_start
 
-zm_ft2dir:
-	.byte 0,2,1,3	; filetype (-,P,S,U) -> directory type (S=1,P=2,U=3)
 
 ;----------------------------------------------------------------------
 ; A: 0 upload, $80 download
@@ -444,17 +449,27 @@ zr_sub:
 	bpl zr_sub
 	jsr zm_flush
 	jmp zr_sub
-@notg:	pha
-	jsr zm_flush
-	pla
-	cmp #ZCRCE
-	jeq zr_hdr
+@notg:	cmp #ZCRCE
+	beq @e
+	; ZCRCQ/ZCRCW: with flow control, answer first, so the sender's
+	; turnaround overlaps our disk write (flow control holds what comes
+	; meanwhile). Without it, nothing may come in while we write.
+	bit zm_ovio
+	bpl @late
 	pha
 	jsr zm_send_zack
+	jsr zm_flush
 	pla
-	cmp #ZCRCQ
-	beq zr_sub
+	jmp @next
+@late:	pha
+	jsr zm_flush
+	jsr zm_send_zack
+	pla
+@next:	cmp #ZCRCQ
+	jeq zr_sub
 	jmp zr_hdr	; ZCRCW
+@e:	jsr zm_flush
+	jmp zr_hdr
 
 zr_suberr:
 	jsr zm_count_error
@@ -469,13 +484,14 @@ zm_send_zrinit:
 	; we can't receive while writing. With flow control, a sender that
 	; streams can run far ahead (TCP buffers), and while a slow drive
 	; catches up, it times out waiting for our answer to ZEOF.
-	ldx #>1024
-	stx zm_txh+2
 	lda #CANFDX | CANFC32
+	ldx #>1024
 	bit zm_ovio
 	bpl :+
 	ora #CANOVIO
-:	sta zm_txh+4	; ZF0
+	ldx #>ZM_RXWIN
+:	stx zm_txh+2
+	sta zm_txh+4	; ZF0
 	lda #ZRINIT
 	jmp zm_shex
 
@@ -1212,9 +1228,11 @@ zs_file:
 	and #7
 	sta zm_ftype	; directory type: 1 SEQ, 2 PRG, 3 USR
 	beq @rts
+	cmp #ZM_PROBE
+	beq @ok
 	cmp #4
 	bcs @rts	; no DEL or REL files
-	ldy #17
+@ok:	ldy #17
 @trim:	lda (zm_ptr),y	; name without the $A0 padding
 	cmp #$a0
 	bne @len
@@ -1367,23 +1385,37 @@ zm_p2a:
 
 ;----------------------------------------------------------------------
 ; open zm_name for reading as LFN_FILE; C=1 on error
+; zm_ftype ZM_PROBE: try PRG, SEQ, USR, then the name alone (sent as
+; SEQ); zm_ftype is then the type found
 zs_open:
+	lda zm_ftype
+	cmp #ZM_PROBE
+	bne zs_open1
+	ldx #3
+@try:	lda @types,x
+	sta zm_ftype
+	stx zm_tmpx
+	jsr zs_open1
+	bcc @rts
+	ldx zm_tmpx
+	dex
+	bpl @try
+@rts:	rts
+@types:	.byte $81,3,1,2	; (reversed) $81: no type in the name
+
+zs_open1:
 	jsr rs232_off	; reading: see zs_read
 	jsr zm_name2inp
+	ldy zm_ftype
+	bmi :+
 	lda #','
 	sta inpbuf,x
 	inx
-	ldy zm_ftype
 	lda drtype,y
 	sta inpbuf,x
 	inx
-	lda #','
-	sta inpbuf,x
-	inx
-	lda #'R'
-	sta inpbuf,x
-	inx
-	jsr zm_openinp
+:		; "NAME,T" reads, like F1's own test; the
+	jsr zm_openinp	; ("NAME,T,R" may fail on some drives)
 	php
 	beq :+
 	jsr zm_closef

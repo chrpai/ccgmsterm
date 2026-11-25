@@ -208,6 +208,9 @@ handle_f1_upload:
 	sta mulcnt
 	jsr ui_prompt_filename
 	jeq ui_abort
+	lda protoc
+	cmp #PROTOCOL_ZMODEM
+	jeq zm_upload_single_stub	; it opens the file itself
 	jsr ercopn
 	ldy max
 	lda #','
@@ -272,9 +275,6 @@ filopn:
 
 ;----------------------------------------------------------------------
 uplok:
-	lda protoc
-	cmp #PROTOCOL_ZMODEM
-	jeq zm_upload_single_stub
 	lda #0
 	jsr ui_setup_xfer_screen
 	jsr clrchn
