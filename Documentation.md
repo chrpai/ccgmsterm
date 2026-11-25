@@ -249,7 +249,8 @@ Supported sequences (`ESC [` ...):
 | `X` | erase characters |
 | `L` `M` | insert/delete lines; `ESC [ M` without a number starts ANSI music |
 | `S` `T` | scroll up/down |
-| `m` | 0 reset, 1 bright, 5 bright background, 7 reverse, 22/25/27 off, 30-37, 39, 40-47, 49 |
+| `@` `P` | insert/delete characters |
+| `m` | 0 reset, 1 bright, 4 underline, 5 bright background, 7 reverse, 22/24/25/27 off, 30-37, 39, 40-47, 49 |
 
 Private and unknown sequences (`ESC [ ? 7 h`, `ESC [ ? 25 l`, ...) and ANSI music (`ESC [ M`, `ESC [ N`, `ESC [ |` up to CTRL-N) are ignored without printing anything. Lines wrap after column 80 only when the next character arrives, and CR and LF are separate (LF alone keeps the column).
 

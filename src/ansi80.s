@@ -64,6 +64,7 @@ a80_bg:		.byte 0
 a80_bold:	.byte 0
 a80_blink:	.byte 0
 a80_rev:	.byte 0
+a80_ul:		.byte 0	; underline
 a80_petc:	.byte $ff	; C64 color set by a PETSCII color code, $ff: none
 a80_fgc:	.byte 15	; effective C64 colors
 a80_bgc:	.byte 0
@@ -192,12 +193,16 @@ a80_draw:
 	beq @invert
 	; a blank glyph only needs the background somewhere in the cell,
 	; a full block only the foreground
+	lda a80_ul	; an underlined blank isn't blank
+	bne @nonblank
 	lda a80_t1
 	beq @blank
 	cmp #' '
 	beq @blank
 	cmp #$ff
 	beq @blank
+@nonblank:
+	lda a80_t1
 	cmp #$db
 	bne @set
 	lda a80_old	; full block
@@ -262,7 +267,13 @@ a80_draw:
 	sta a80_gbuf+r
 	.endrepeat
 @merge_l:
-	ldy #7
+	lda a80_ul
+	beq :+
+	lda a80_inv	; underline: bottom row in the foreground
+	eor #$ff
+	and #$f0
+	sta a80_gbuf+7
+:	ldy #7
 :	lda (a80_bmp),y
 	and #$0f
 	ora a80_gbuf,y
@@ -292,7 +303,13 @@ a80_draw:
 	sta a80_gbuf+r
 	.endrepeat
 @merge_r:
-	ldy #7
+	lda a80_ul
+	beq :+
+	lda a80_inv
+	eor #$ff
+	and #$0f
+	sta a80_gbuf+7
+:	ldy #7
 :	lda (a80_bmp),y
 	and #$f0
 	ora a80_gbuf,y
@@ -646,6 +663,7 @@ a80_sgr_defaults:
 	sta a80_bold
 	sta a80_blink
 	sta a80_rev
+	sta a80_ul
 	lda #$ff
 	sta a80_petc
 	rts
@@ -735,6 +753,15 @@ a80_sgr:
 	bne :+
 	lda #0
 	sta a80_rev
+	beq @next
+:	cmp #4
+	bne :+
+	sta a80_ul	; non-zero
+	beq @next	; [Z from cmp]
+:	cmp #24
+	bne :+
+	lda #0
+	sta a80_ul
 	beq @next
 :	cmp #39
 	bne :+
@@ -961,14 +988,14 @@ a80_final:
 	rts
 
 a80_cmds:
-	.byte "ABCDEFGHJKdfmsunMN|LSTX"
+	.byte "ABCDEFGHJKdfmsunMN|LSTX@P"
 a80_cmd_end:
 a80_cmd_lo:
 	.lobytes a80_cuu-1, a80_cud-1, a80_cuf-1, a80_cub-1, a80_cnl-1, a80_cpl-1, a80_cha-1, a80_cup-1, a80_ed-1, a80_el-1, a80_vpa-1, a80_cup-1
-	.lobytes a80_sgr-1, a80_save-1, a80_restore-1, a80_dsr-1, a80_dl-1, a80_music_on-1, a80_music_on-1, a80_il-1, a80_su-1, a80_sd-1, a80_ech-1
+	.lobytes a80_sgr-1, a80_save-1, a80_restore-1, a80_dsr-1, a80_dl-1, a80_music_on-1, a80_music_on-1, a80_il-1, a80_su-1, a80_sd-1, a80_ech-1, a80_ich-1, a80_dch-1
 a80_cmd_hi:
 	.hibytes a80_cuu-1, a80_cud-1, a80_cuf-1, a80_cub-1, a80_cnl-1, a80_cpl-1, a80_cha-1, a80_cup-1, a80_ed-1, a80_el-1, a80_vpa-1, a80_cup-1
-	.hibytes a80_sgr-1, a80_save-1, a80_restore-1, a80_dsr-1, a80_dl-1, a80_music_on-1, a80_music_on-1, a80_il-1, a80_su-1, a80_sd-1, a80_ech-1
+	.hibytes a80_sgr-1, a80_save-1, a80_restore-1, a80_dsr-1, a80_dl-1, a80_music_on-1, a80_music_on-1, a80_il-1, a80_su-1, a80_sd-1, a80_ech-1, a80_ich-1, a80_dch-1
 .assert a80_cmd_hi-a80_cmd_lo = a80_cmd_end-a80_cmds, error, "ANSI command table"
 
 ; ESC[nA
@@ -1130,6 +1157,148 @@ a80_el1:
 	ldx a80_x
 	ldy a80_y
 	jmp a80_erase
+
+;----------------------------------------------------------------------
+; ESC[n@: insert n blanks at the cursor, the rest of the line moves right
+a80_ich:
+	jsr a80_count
+	lda #A80_COLS-1
+	sta a80_cnt	; destination column
+@loop:	lda a80_cnt
+	sec
+	sbc a80_n
+	bcc @erase
+	cmp a80_x
+	bcc @erase
+	tax		; source column
+	lda a80_cnt
+	jsr a80_move_char
+	dec a80_cnt
+	jmp @loop
+@erase:	lda a80_x
+	clc
+	adc a80_n
+	tax
+	dex
+	lda a80_x
+	ldy a80_y
+	jmp a80_erase
+
+; ESC[nP: delete n characters at the cursor, the rest of the line moves left
+a80_dch:
+	jsr a80_count
+	lda a80_x
+	sta a80_cnt	; destination column
+@loop:	lda a80_cnt
+	clc
+	adc a80_n
+	cmp #A80_COLS
+	bcs @erase
+	tax		; source column
+	lda a80_cnt
+	jsr a80_move_char
+	inc a80_cnt
+	jmp @loop
+@erase:	lda #A80_COLS
+	sec
+	sbc a80_n
+	ldx #A80_COLS-1
+	ldy a80_y
+	jmp a80_erase
+
+; a80_n = first parameter (0 -> 1), at most 80 - cursor column
+a80_count:
+	lda #0
+	sta a80_wrap
+	lda #A80_COLS
+	sec
+	sbc a80_x
+	sta a80_t0
+	jsr a80_par1
+	cmp a80_t0
+	bcc :+
+	lda a80_t0
+:	sta a80_n
+	rts
+
+; move the character in column X to column A on the cursor row.
+; The cell colors move along; a character that lands in the right half
+; of a cell keeps that cell's colors unless both halves come from the
+; same source cell.
+a80_move_char:
+	sta a80_gx	; destination
+	stx a80_mv_src
+	lda a80_y
+	sta a80_gy
+	jsr a80_calc_bmp
+	lda #0
+	rol
+	sta a80_mv_dhalf
+	lda a80_bmp
+	sta a80_dst
+	lda a80_bmp+1
+	sta a80_dst+1
+	lda a80_col
+	sta a80_mv_dcol
+	lda a80_col+1
+	sta a80_mv_dcol+1
+	lda a80_mv_src
+	sta a80_gx
+	jsr a80_calc_bmp
+	lda #0
+	rol
+	sta a80_mv_shalf
+	A80_RAM_ON
+	ldy #0
+	lda (a80_col),y	; source colors
+	ldx a80_mv_dhalf
+	beq :+		; lands in a left half
+	ldx a80_mv_shalf
+	beq @pixels	; odd move into a right half: keep the cell colors
+:	ldx a80_mv_dcol
+	stx a80_col
+	ldx a80_mv_dcol+1
+	stx a80_col+1
+	sta (a80_col),y
+@pixels:
+	ldy #7
+@row:	lda (a80_bmp),y
+	ldx a80_mv_shalf
+	bne @from_r
+	and #$f0
+	ldx a80_mv_dhalf
+	beq @put
+	lsr
+	lsr
+	lsr
+	lsr
+	jmp @put
+@from_r:
+	and #$0f
+	ldx a80_mv_dhalf
+	bne @put
+	asl
+	asl
+	asl
+	asl
+@put:	sta a80_t0
+	lda #$0f	; bits to keep in the destination byte
+	ldx a80_mv_dhalf
+	beq :+
+	lda #$f0
+:	and (a80_dst),y
+	ora a80_t0
+	sta (a80_dst),y
+	dey
+	bpl @row
+	A80_RAM_OFF
+	rts
+
+a80_n:		.byte 0
+a80_mv_src:	.byte 0
+a80_mv_shalf:	.byte 0
+a80_mv_dhalf:	.byte 0
+a80_mv_dcol:	.word 0
 
 ; ESC[nX: erase n characters
 a80_ech:
