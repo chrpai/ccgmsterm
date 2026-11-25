@@ -38,6 +38,8 @@ Here are some details that will help with development.
 | $D800-$DFCF | logical 80x25 screen RAM                 |
 | $E000-$FE3F | bitmap                                   |
 
+* 80 column ANSI mode: same bitmap at $E000 and colors at $D400, but each $D400 byte holds (foreground << 4) \| background for its two characters. $D000-$D3FF and $D800-$DFFF are not used; the CP437 font lives in the program.
+
 ## Banking
 
 CCGMS runs with $01 = $37. Whenever you want to turn off the KERNAL ROM, you need to store #$34 in $01. This is effectively the same as #$30, but allows the timing-critical UP9600 code to switch I/O on and off with `inc $01` and `dec $01`.

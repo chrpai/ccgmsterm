@@ -32,6 +32,7 @@ losvco:
 
 ;----------------------------------------------------------------------
 save_config:
+	jsr term_mode_get
 	lda easyflash_support
 	beq :+
 	lda easyflash_use_disk
@@ -95,6 +96,47 @@ load_config_done:
 load_config_easyflash:
 	jsr easyflash_read_config
 	jmp load_config_done
+
+;----------------------------------------------------------------------
+; remember the current terminal mode in term_mode
+term_mode_get:
+	lda #0
+	ldx ascii_mode
+	beq :+
+	lda #1
+:	bit col80_enabled
+	bpl :+
+	ora #2
+:	bit ansi80_active
+	bpl :+
+	lda #4
+:	sta term_mode
+	rts
+
+; switch to the terminal mode in term_mode (at startup)
+term_mode_set:
+	ldx term_mode
+	beq @rts	; PETSCII 40: as always
+	cpx #5
+	bcs @rts
+	txa
+	and #1
+	cpx #4
+	bne :+
+	lda #1		; ANSI 80 is ASCII 80 plus the ANSI screen
+:	sta ascii_mode
+	jsr col80_set_charset
+	lda term_mode
+	cmp #2
+	bcc @rts
+	lda #$80
+	sta col80_enabled
+	jsr col80_on
+	lda term_mode
+	cmp #4
+	bne @rts
+	jmp ansi80_enter
+@rts:	rts
 
 ;----------------------------------------------------------------------
 losver:

@@ -112,7 +112,12 @@ print_instr:
 	ldy #>txt_banner2d
 	jsr outstr
 @cont:
-	ldx ascii_mode
+	bit ansi80_active
+	bpl :+
+	lda #<txt_ansi
+	ldy #>txt_ansi
+	bne @3
+:	ldx ascii_mode
 	bne @2
 	lda #<txt_graphics
 	ldy #>txt_graphics

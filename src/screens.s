@@ -80,6 +80,8 @@ outsp1
 	bne outsp1
 	rts
 bufclr
+	lda #0
+	sta buffer_ansi
 	lda buffst
 	sta buffer_ptr
 	lda buffst+1

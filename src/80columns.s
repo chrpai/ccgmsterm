@@ -22,6 +22,7 @@
 .export col80_active, col80_bg_update
 .export col80_read_scr_chr, col80_read_scr_col
 .import clear_screens, col80_enabled
+.import ansi80_active, ansi80_bsout
 .importzp locat, nlocat
 
 .import charset_ascii_patches, charset_petscii_patches
@@ -301,8 +302,10 @@ new_bsout:
 	tya
 	pha
 	lda DATA
+	bit ansi80_active
+	bmi @ansi
 	jsr bsout_core
-	pla
+@back:	pla
 	tay
 	pla
 	tax
@@ -312,6 +315,8 @@ new_bsout:
 	cli ; XXX user may have wanted interrupts off!
 .endif
 	rts
+@ansi:	jsr ansi80_bsout	; 80 column ANSI mode (ansi80.s)
+	jmp @back
 :	jmp $F1D5 ; original non-screen BSOUT
 
 bsout_core:
@@ -864,7 +869,10 @@ draw_char:
 
 ; change background color
 col80_bg_update:
-	jsr set_bgcolor
+	bit ansi80_active	; ANSI mode keeps its own colors
+	bpl :+
+	rts
+:	jsr set_bgcolor
 	cmp color2
 	bne @5
 	rts

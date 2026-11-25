@@ -11,6 +11,7 @@ term_entry_first:
 	jsr rs232_init
 	jsr bell
 	jsr themeroutine
+	jsr term_mode_set	; terminal mode saved with the config
 
 ; enter here to print banner again
 term_entry:
@@ -183,6 +184,12 @@ term_no5:
 ;	ora #$80
 ;term_upplow:
 
+; 80 column ANSI mode: keys go out as ASCII and ANSI sequences
+	bit ansi80_active
+	bpl :+
+	jmp term_key_ansi
+:
+
 ; ASCII conversion
 	sta tmp03
 	ldx ascii_mode
@@ -271,6 +278,12 @@ term_rx_char:	; contn2 comes back here with the next byte
 	jmp term_rx_skip
 term_nauto:
 .endif
+
+; 80 column ANSI mode: raw bytes go to the buffer and the ANSI parser
+	bit ansi80_active
+	bpl :+
+	jmp term_rx_ansi
+:
 
 ; ASCII conversion
 	ldx ascii_mode
@@ -418,6 +431,7 @@ contn2:
 	jsr cursor_off
 :	pla
 	jsr fast_chrout	; print input byte to screen
+contn3:
 	lda #0		; kill modes the char might have enabled
 	sta qmode	; (quote_insert_off)
 	sta imode
@@ -444,4 +458,44 @@ contn2:
 
 rx_burst:
 	.byte 0		; 1: printing a burst, cursor not drawn
+
+;----------------------------------------------------------------------
+; 80 column ANSI mode (ansi80.s)
+
+; received byte
+term_rx_ansi:
+	ldx buffer_open
+	beq :+
+	stx buffer_ansi	; the buffer now holds raw ANSI
+	jsr ansi_buffer_put
+:	pha
+	lda rx_burst	; cursor already hidden?
+	bne :+
+	jsr cursor_off
+:	pla
+	jsr ansi80_putc
+	jmp contn3
+
+; key pressed
+term_key_ansi:
+	jsr ansi80_key	; returns the byte to echo, if any
+	beq :+
+	ldx half_duplex
+	beq :+
+	pha
+	jsr cursor_off
+	pla
+	ldx buffer_open
+	beq @1
+	stx buffer_ansi
+	jsr ansi_buffer_put
+@1:	jsr ansi80_putc
+	jmp term_mainloop
+:	jmp term_loop2
+
+ansi_buffer_put:
+	sta tmp03
+	jsr buffer_put
+	lda tmp03
+	rts
 

@@ -49,9 +49,14 @@ dskout:
 	jsr cursor_off
 	pla
 	pha
-	jsr handle_control_codes
+	bit ansi80_active
+	bpl :+
+	jsr ansi80_putc	; ANSI mode: raw bytes through the ANSI parser
+	jmp @shown
+:	jsr handle_control_codes
 	jsr chrout
 	jsr quote_insert_off
+@shown:
 	ldx buffl2
 	bne @dskmo1	; non zero: also output to modem
 	pla
@@ -63,6 +68,8 @@ dskout:
 	jsr rs232_on
 	jsr rs232_clear
 	pla
+	bit ansi80_active
+	bmi :+		; ANSI mode: send raw
 	ldx ascii_mode
 	beq :+
 	jsr petscii_to_ascii

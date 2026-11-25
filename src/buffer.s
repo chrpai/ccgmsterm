@@ -204,8 +204,9 @@ no2
 
 ; V: view
 	cmp #'V'
-	bne no5
+	jne no5
 	jsr col80_resume
+	jsr ansi_view_mode	; an ANSI buffer is shown in ANSI mode
 	lda #CLR
 	jsr chrout
 	lda #$80
@@ -214,6 +215,21 @@ no2
 	sta buffl2
 	jsr prtbuf
 	jmp term_mainloop
+
+;----------------------------------------------------------------------
+; switch to the 80 column ANSI mode if the buffer holds ANSI
+ansi_view_mode:
+	lda buffer_ansi
+	beq @rts
+	bit ansi80_active
+	bmi @rts
+	bit col80_enabled
+	bmi :+
+	lda #$80
+	sta col80_enabled
+	jsr col80_on
+:	jmp ansi80_enter
+@rts:	rts
 
 ;----------------------------------------------------------------------
 ; buf to screen
@@ -283,6 +299,7 @@ no5
 	cmp #'S'
 	jne no6
 	jsr solfil
+	jsr ansi80_fix_name	; ANSI buffers are saved as NAME.ans
 	jmp savbuf
 solfil
 	ora #$80
@@ -379,6 +396,10 @@ no6
 	cmp #'L'
 	bne bufcm7
 	jsr solfil
+	jsr ansi80_name_is_ans	; loading NAME.ans: the buffer holds ANSI
+	bne lodbuf
+	lda #1
+	sta buffer_ansi
 lodbuf
 	jsr rs232_off	;5-13 put in, didnt seem to need it, need to test with it. might crash with it cause the program does that sometimes....
 	lda #2
