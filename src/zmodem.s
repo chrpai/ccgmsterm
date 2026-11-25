@@ -1534,9 +1534,7 @@ zs_data:
 	bne zs_reply
 	lda #0
 	sta zm_tries
-	sta zm_since
-	sta zm_since+1
-	jmp @sub
+	jmp zs_data	; ZCRCW ended the frame: a new ZDATA header
 
 ; a header from the receiver while sending
 zs_reply:
