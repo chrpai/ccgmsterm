@@ -100,7 +100,15 @@ ZM_ROW_ABORT	= 22
 .ifndef ZM_RXWIN
 ZM_RXWIN	= 0
 .endif
-ZM_PROBE	= 7	; mulfil type byte: find the type when opening
+; ZM_DEBUG=1: log the last 38 headers at $033C-$03FB (the tape buffer
+; and the UP9600 table: not for UP9600) and show them on exit
+.ifndef ZM_DEBUG
+ZM_DEBUG	= 0
+.endif
+ZM_PROBE	= 7
+.ifndef ZM_SA_RD
+ZM_SA_RD	= 2	; secondary address for reading a file to send
+.endif	; mulfil type byte: find the type when opening
 
 .segment "ZMODEM"	; runs with the BASIC ROM banked out (see below)
 
@@ -186,6 +194,8 @@ zm_begin:
 :	sta zm_vars-1,x
 	dex
 	bne :-
+	lda #2
+	sta zm_sa
 	lda #<ZM_TIMEOUT
 	sta zm_tmo
 	lda #>ZM_TIMEOUT
@@ -198,6 +208,9 @@ zm_begin:
 	ror zm_ovio	; bit 7: yes
 
 	jsr zm_dsk_on
+.if ZM_DEBUG
+	jsr zm_dclr
+.endif
 	jsr zm_screen
 	jsr zm_mktab32	; usual case first, before data arrives
 	lda #2
@@ -989,7 +1002,7 @@ zm_openinp:
 	jsr setnam
 	lda #LFN_FILE
 	ldx device_disk
-	ldy #2
+	ldy zm_sa
 	jsr setlfs
 	jsr open
 ; read the whole drive status into ZM_ERRMSG; Z=1 if it is "00"
@@ -1406,6 +1419,8 @@ zs_open:
 @types:	.byte $81,3,1,2	; (reversed) $81: no type in the name
 
 zs_open1:
+	lda #ZM_SA_RD
+	sta zm_sa
 	jsr rs232_off	; reading: see zs_read
 	jsr zm_name2inp
 	ldy zm_ftype
@@ -1418,6 +1433,10 @@ zs_open1:
 	inx
 :		; "NAME,T" reads, like F1's own test; the
 	jsr zm_openinp	; ("NAME,T,R" may fail on some drives)
+	php
+	ldx #2
+	stx zm_sa
+	plp
 	php
 	beq :+
 	jsr zm_closef
@@ -1723,7 +1742,21 @@ zs_read:
 	beq @done
 @eof:	lda #$80
 	sta zm_eof
-@done:	jsr clrchn
+@done:
+.if ZM_DEBUG
+	lda status
+	sta zm_dbuf+3
+	lda zm_blen
+	sta zm_dbuf+1
+	lda zm_blen+1
+	sta zm_dbuf+2
+	lda zm_lim
+	sta zm_dbuf+4
+	lda #'R'	; read: bytes lo, hi, ST, limit lo
+	ldx #<zm_dbuf
+	jsr zm_dlog
+.endif
+	jsr clrchn
 	jmp rs232_on
 
 ; zm_ptr/zm_n = the next subpacket at zm_pos; reads the file as needed
@@ -1902,6 +1935,11 @@ zm_gethdr_a:	; A: first byte, already read
 	beq zm_gh_bin32
 	bne @chk
 zm_gh_fail:
+.if ZM_DEBUG
+	lda #$7f
+	ldx #<zm_hdr
+	jsr zm_dlog
+.endif
 	sec
 	rts
 
@@ -1923,6 +1961,11 @@ zm_gh_c16:
 	ora zm_c+1
 	bne zm_gh_fail
 zm_gh_ok:
+.if ZM_DEBUG
+	lda zm_hdr
+	ldx #<zm_hdr
+	jsr zm_dlog
+.endif
 	lda zm_hdr
 	clc
 	rts
@@ -1956,8 +1999,8 @@ zm_gh_bin32:
 	cmp #9		; 5 bytes and the CRC
 	bne :-
 	jsr zm_c32check
-	bne zm_gh_fail
-	beq zm_gh_ok
+	jne zm_gh_fail
+	jmp zm_gh_ok
 
 ; two hex digits; C=1 on error
 zm_gethex:
@@ -1998,6 +2041,11 @@ zm_gethex:
 ; send a hex header: type A, zm_txh+1..4
 zm_shex:
 	sta zm_txh
+.if ZM_DEBUG
+	ora #$80
+	ldx #<zm_txh
+	jsr zm_dlog
+.endif
 	lda #ZPAD
 	jsr rs232_put
 	lda #ZPAD
@@ -2058,6 +2106,11 @@ zm_hexdig:
 ; send a binary header (CRC-16 or CRC-32, as zm_t32): type A, zm_txh+1..4
 zm_sbin:
 	sta zm_txh
+.if ZM_DEBUG
+	ora #$c0
+	ldx #<zm_txh
+	jsr zm_dlog
+.endif
 	lda #ZPAD
 	jsr rs232_put
 	lda #ZDLE
@@ -2530,6 +2583,9 @@ zm_exit:
 	ldy #0
 	jsr zm_at
 	jsr zm_eol
+.if ZM_DEBUG
+	jsr zm_dshow
+.endif
 	lda zm_zpsave
 	sta zm_ptr
 	lda zm_zpsave+1
@@ -2556,6 +2612,113 @@ zm_close_any:
 zm_at:
 	clc
 	jmp plot
+
+.if ZM_DEBUG
+ZM_DLOG	= $033c
+ZM_DN	= 38
+; log entry: A = type (bit 7: sent, bit 6: binary; $7F: bad header),
+; then the 4 bytes at zm_hdr+1 or zm_txh+1 (X: low byte of that)
+zm_dlog:
+	pha
+	stx zm_dsrc
+	lda zm_dpos
+	asl
+	asl
+	clc
+	adc zm_dpos
+	tay		; Y = pos * 5
+	pla
+	sta ZM_DLOG,y
+	ldx #1
+:	stx zm_dtmp
+	txa
+	clc
+	adc zm_dsrc
+	sta @src+1
+@src:	lda zm_hdr	; (low byte patched; zm_hdr and zm_txh share a page?)
+	iny
+	sta ZM_DLOG,y
+	ldx zm_dtmp
+	inx
+	cpx #5
+	bne :-
+	ldx zm_dpos
+	inx
+	cpx #ZM_DN
+	bcc :+
+	ldx #0
+:	stx zm_dpos
+	rts
+
+; show the log, oldest first, 3 entries a row, on rows 0-12
+zm_dshow:
+	ldx #0
+	lda #1		; white
+:	sta $d800,x
+	sta $d900,x
+	inx
+	bne :-
+	ldx #0
+	ldy #0
+	jsr zm_at
+	lda #WHITE
+	jsr chrout
+	lda #0
+	sta zm_dcnt
+	lda zm_dpos
+	sta zm_dcur
+@e:	lda zm_dcur
+	asl
+	asl
+	clc
+	adc zm_dcur
+	tay
+	ldx #5
+@b:	lda ZM_DLOG,y
+	jsr zm_dhex
+	iny
+	dex
+	bne @b
+	lda #' '
+	jsr chrout
+	inc zm_dcur
+	lda zm_dcur
+	cmp #ZM_DN
+	bcc :+
+	lda #0
+	sta zm_dcur
+:	inc zm_dcnt
+	lda zm_dcnt
+	cmp #ZM_DN
+	bne @e
+	rts
+
+zm_dhex:
+	pha
+	lsr
+	lsr
+	lsr
+	lsr
+	jsr @d
+	pla
+	and #$0f
+@d:	cmp #10
+	bcc :+
+	adc #6
+:	adc #'0'
+	jmp chrout
+
+; clear the log (zm_begin)
+zm_dclr:
+	lda #0
+	ldx #ZM_DN*5-1
+:	sta ZM_DLOG,x
+	dex
+	bne :-
+	sta ZM_DLOG
+	sta zm_dpos
+	rts
+.endif
 
 ; "Can't open" and the drive's message below it
 zm_cant_open:
@@ -2824,7 +2987,16 @@ zm_entry:	.res 2
 zm_info:	.res 1
 zm_bpos:	.res 4	; send: file position of the buffer
 zm_lim:		.res 2
-zm_eof:		.res 1	; bit 7: the file has been read to the end
+zm_eof:		.res 1
+zm_sa:		.res 1	; secondary address for zm_openinp
+.if ZM_DEBUG
+zm_dpos:	.res 1
+zm_dsrc:	.res 1
+zm_dtmp:	.res 1
+zm_dcnt:	.res 1
+zm_dcur:	.res 1
+zm_dbuf:	.res 5
+.endif	; bit 7: the file has been read to the end
 zm_vars_end:
 .assert zm_vars_end-zm_vars <= 256, error, "zm_vars too big"
 ;======================================================================
