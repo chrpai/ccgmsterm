@@ -245,7 +245,9 @@ net_poll:
 	sec
 	sbc net_got
 	cmp #READ_AGAIN
-	bcs @idle
+	ror net_stream		; bit 7: that read was long
+	bit net_stream
+	bmi @idle
 	lda txlen
 	beq @rts
 	jmp net_flush
@@ -256,7 +258,15 @@ net_poll:
 	bpl @rts
 @read:	bit net_off
 	bmi @rts		; disabled: start no read
-	lda rtail		; bytes in ribuf; from the pointers, since
+	; With bytes still in ribuf (the poll every 32 bytes), read ahead
+	; only in a stream. Otherwise the read may be the one that waits for
+	; data that won't come until we answer, holding up the answer.
+	lda rtail
+	cmp rhead
+	beq :+
+	bit net_stream
+	bpl @rts
+:	lda rtail		; bytes in ribuf; from the pointers, since
 	sec			; callers may move rhead without rfree
 	sbc rhead		; (xmodem's clear_input_buffer)
 	sta net_t
@@ -1113,6 +1123,7 @@ net_available:	.byte 0	; 1: the UCI network target answered
 net_online:	.byte 0	; bit 7: connected
 net_pend:	.byte 0	; 1: a READ is running
 net_got:	.byte 0	; rtail before a read was collected
+net_stream:	.byte 0	; bit 7: the last read was long, read ahead
 net_off:	.byte 0	; bit 7: disabled, no reads
 net_tick:	.byte 1	; bytes until the connection is serviced
 net_sock:	.byte 0
