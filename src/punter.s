@@ -244,7 +244,13 @@ accept_loop:
 	bne @loop2
 	jmp check_cancel; loop to accept_loop unless cancelled
 
-@match:	lda #$FF	; set timer to -1
+@match:	; Ultimate Net: done at once. The poll that would look for a
+	; following char starts a network read, and the answer we are
+	; about to send would wait behind it.
+	lda modem_type
+	cmp #MODEM_TYPE_ULTIMATE_NET
+	jeq @end
+	lda #$FF	; set timer to -1
 	sta timer1
 	sta timer1+1
 	jmp @loop1	; next char

@@ -67,6 +67,7 @@ CMDBUF_SIZE	= 64
 RESPBUF_SIZE	= 16
 READ_MARGIN	= 16	; ribuf room kept free for NO CARRIER
 READ_MAX	= 255-READ_MARGIN
+READ_AGAIN	= 128	; a read this long is followed by the next one at once
 UCI_TIMEOUT	= 10*60	; jiffies a command may take before it is aborted
 T_CMD		= 0	; jif_t0 slots
 T_READ		= 2
@@ -221,16 +222,33 @@ net_poll:
 .endif
 	ldx #T_READ		; read still running: for too long?
 	jsr jif_late
-	bcc @rts
+	bcc @near
 	lda #UCI_ABORT		; the Ultimate didn't answer: give up
 	sta UCI_CONTROL
 	jsr uci_idle
 	lda #0
 	sta net_pend
 	jmp net_lost
-@done:	jsr net_collect
+@near:	rts
+@done:	lda rtail
+	sta net_got
+	jsr net_collect
 	bit net_online
 	bpl @rts
+	; A short read means the data has paused, and the program is likely
+	; to answer it. A new read started now would hold the UCI until data
+	; comes or the Ultimate's 40 ms read timeout ends, and the answer (and
+	; a disable before disk access) would wait behind it. So start the
+	; next read only on a later poll, after what is queued has gone out.
+	; A long read means a stream: read on at once.
+	lda rtail
+	sec
+	sbc net_got
+	cmp #READ_AGAIN
+	bcs @idle
+	lda txlen
+	beq @rts
+	jmp net_flush
 @idle:	lda txlen
 	beq @read
 	jsr net_flush
@@ -1094,6 +1112,7 @@ txt_ident:
 net_available:	.byte 0	; 1: the UCI network target answered
 net_online:	.byte 0	; bit 7: connected
 net_pend:	.byte 0	; 1: a READ is running
+net_got:	.byte 0	; rtail before a read was collected
 net_off:	.byte 0	; bit 7: disabled, no reads
 net_tick:	.byte 1	; bytes until the connection is serviced
 net_sock:	.byte 0
