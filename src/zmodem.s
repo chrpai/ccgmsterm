@@ -98,7 +98,7 @@ ZM_ROW_ABORT	= 22
 ; ZRINIT buffer size with flow control (SwiftLink, Ultimate Net), in
 ; bytes, a multiple of 256; 0: the sender may stream the whole file
 .ifndef ZM_RXWIN
-ZM_RXWIN	= 1024
+ZM_RXWIN	= 0
 .endif
 ZM_PROBE	= 7	; mulfil type byte: find the type when opening
 
@@ -996,6 +996,8 @@ zm_openinp:
 zm_readerr:
 	ldx #LFN_DISK_CMD
 	jsr chkin
+	lda #0		; STATUS may be stale (rs232_get sets it)
+	sta status
 	lda #0
 	sta zm_i
 @l:	jsr getin
@@ -1049,6 +1051,8 @@ zm_length:
 	bne @done
 	ldx #LFN_FILE
 	jsr chkin
+	lda #0		; STATUS may be stale (rs232_get sets it)
+	sta status
 @loop:	jsr getin
 	inc zm_have
 	bne :+
@@ -1259,9 +1263,7 @@ zs_file:
 	jsr zm_show_bytes
 	jsr zs_open
 	bcc :+
-	lda #<zt_cant_open
-	ldy #>zt_cant_open
-	jmp zm_msg
+	jmp zm_cant_open
 :	jsr zs_info
 	lda #<zt_offering
 	ldy #>zt_offering
@@ -1599,6 +1601,8 @@ zs_seek:
 	jsr zs_close
 	jsr zs_open
 	bcc :+
+	jsr zm_dosline
+	jsr zm_canit
 	lda #<zt_cant_open
 	ldy #>zt_cant_open
 	jmp zm_fail
@@ -1695,6 +1699,8 @@ zs_read:
 	jsr rs232_off
 	ldx #LFN_FILE
 	jsr chkin
+	lda #0		; STATUS may be stale (rs232_get sets it)
+	sta status
 	lda #<ZM_BUF
 	sta zm_ptr
 	lda #>ZM_BUF
@@ -2552,6 +2558,21 @@ zm_close_any:
 zm_at:
 	clc
 	jmp plot
+
+; "Can't open" and the drive's message below it
+zm_cant_open:
+	lda #<zt_cant_open
+	ldy #>zt_cant_open
+	jsr zm_msg
+; the drive's message below the status line
+zm_dosline:
+	ldx #ZM_ROW_MSG+1
+	ldy #2
+	jsr zm_at
+	lda #<ZM_ERRMSG
+	ldy #>ZM_ERRMSG
+	jsr outstr
+	jmp zm_eol
 
 ; status line message A/Y
 zm_msg:
