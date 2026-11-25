@@ -2,15 +2,15 @@ name: Build
 
 on:
   push:
+    # Version tags are built and published by release.yml.
+    tags-ignore: ['v*']
   pull_request:
   workflow_dispatch:
-  release:
-    types: [published]
 
-# Cancel superseded runs on the same branch/PR (never cancel release runs).
+# Cancel superseded runs on the same branch/PR.
 concurrency:
   group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name != 'release' }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -81,24 +81,3 @@ jobs:
             build/ccgmsterm.sym
           if-no-files-found: error
 
-  release:
-    name: Attach to release
-    if: github.event_name == 'release'
-    needs: build
-    runs-on: ubuntu-24.04
-    permissions:
-      contents: write
-
-    steps:
-      - name: Download build artifacts
-        uses: actions/download-artifact@v8
-        with:
-          pattern: ccgms-*
-          merge-multiple: false
-          path: artifacts
-
-      - name: Upload .prg files to the release
-        uses: softprops/action-gh-release@v3
-        with:
-          files: artifacts/*/dist/*.prg
-          fail_on_unmatched_files: true

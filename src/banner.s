@@ -25,6 +25,20 @@ print_banner:
 	lda #<txt_author
 	ldy #>txt_author
 	jsr outstr
+	lda #<txt_credit
+	ldy #>txt_credit
+	jsr outstr
+	bit col80_active	; 80 col: fill the rest of the row
+	bpl :++
+	ldx #40
+:	lda #' '
+	jsr chrout
+	dex
+	bne :-
+:	lda #RVSOFF
+	jsr chrout
+	lda #DKGRAY
+	jsr chrout
 	ldx #80
 	bit col80_active
 	bmi :+
@@ -153,7 +167,10 @@ txt_banner0d:
 
 txt_author:
 	.byte "  by Craig Smith, Alwyz, Michael Steil  "
-	.byte RVSOFF,DKGRAY,0
+	.byte 0
+txt_credit:
+	.byte "  Ultimate additions by Chris Painter   "
+	.byte 0
 
 txt_banner1a:
 tcol1:	.byte WHITE

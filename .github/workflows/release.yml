@@ -1,0 +1,74 @@
+name: Release
+
+# Push a version tag (git tag v0.3 && git push origin v0.3) to build the
+# standard PRG and publish a GitHub release with it attached.
+# Tags with a hyphen (v0.3-rc1) are marked as pre-releases.
+on:
+  push:
+    tags: ['v*']
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build and publish release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+
+    steps:
+      # The Makefile's `all` target always builds exomizer, so the submodule
+      # is still needed even though only the uncompressed PRG is shipped.
+      - name: Check out (with exomizer submodule)
+        uses: actions/checkout@v7
+        with:
+          submodules: true
+
+      - name: Install cc65
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends cc65
+          ca65 --version
+
+      - name: Get exomizer submodule revision
+        id: exo
+        run: echo "sha=$(git rev-parse HEAD:exomizer)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache exomizer binary
+        uses: actions/cache@v6
+        with:
+          path: build/bin/exomizer
+          key: exomizer-${{ runner.os }}-${{ runner.arch }}-${{ steps.exo.outputs.sha }}
+
+      - name: Build CCGMS
+        run: make -j"$(nproc)"
+
+      - name: Check tag against VERSION in src/ccgmsterm.s
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          src=$(sed -n 's/^\.define VERSION "\(.*\)"/\1/p' src/ccgmsterm.s)
+          if [ "${tag%%-*}" != "$src" ]; then
+            echo "::warning::Tag $GITHUB_REF_NAME does not match VERSION \"$src\" in src/ccgmsterm.s"
+          fi
+
+      - name: Collect outputs
+        run: |
+          mkdir -p dist
+          cp build/ccgmsterm.prg "dist/ccgmsterm-${GITHUB_REF_NAME}.prg"
+          {
+            echo "| file | bytes |"
+            echo "|---|---|"
+            echo "| ccgmsterm-${GITHUB_REF_NAME}.prg | $(stat -c%s build/ccgmsterm.prg) |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          flags=(--verify-tag --generate-notes --title "CCGMS Terminal ${GITHUB_REF_NAME}")
+          case "$GITHUB_REF_NAME" in *-*) flags+=(--prerelease) ;; esac
+          gh release create "$GITHUB_REF_NAME" dist/*.prg "${flags[@]}"
