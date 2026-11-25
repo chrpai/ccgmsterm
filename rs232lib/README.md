@@ -82,6 +82,10 @@ Must be set to the driver/config.
 
 Read by the SwiftLink driver in `rs232_init`. If both are non-zero, the driver sends $FF as $FF $FF and strips telnet commands from the input (telnet IAC handling for the Ultimate's modem emulation). The Ultimate Net driver reads `telnet_iac` the same way. The receive filter is shared, in `rs232_iac.s`.
 
+### `telnet_term_type`
+
+Called by the telnet IAC filter when the server asks for the TERMINAL-TYPE option and when it asks for the name. Returns C=1 if there is no terminal type to report (the option is refused), else A/Y point to the name, zero-terminated ASCII.
+
 ### `net_detect`, `net_available`
 
 Exported by the Ultimate Net driver. Call `net_detect` once at startup, after `is_ultimate` is set; it sets `net_available` to 1 if the UCI network target answers. `rs232_init` falls back to the User Port driver if `MODEM_TYPE_ULTIMATE_NET` is selected without it.

@@ -1651,6 +1651,21 @@ a80_x17:
 	.endrepeat
 
 ;----------------------------------------------------------------------
+; Telnet TERMINAL-TYPE (rs232_iac.s): only the ANSI 80 mode names itself,
+; so the other modes refuse the option as before.
+; Returns C=1 for none, else A/Y = 0-terminated ASCII name.
+telnet_term_type:
+	bit ansi80_active
+	bpl @none
+	lda #<@ansi
+	ldy #>@ansi
+	clc
+	rts
+@none:	sec
+	rts
+@ansi:	.byte "ANSI", 0
+
+;----------------------------------------------------------------------
 ; Keyboard: send the key in A (PETSCII) to the modem.
 ; Returns the ASCII byte sent (for half duplex echo), or 0 (Z set).
 ansi80_key:
