@@ -74,7 +74,9 @@ ZM_BS	= $08
 
 ZM_BUF		= xmodem_buffer	; $C800
 ZM_BUF_END	= ZM_BUF+1024	; receive: one 1 KB subpacket
+.ifndef ZM_TXBLK
 ZM_TXBLK	= 768		; send: subpacket size (mulfil is at $CB00)
+.endif
 ZM_T0		= $0400		; CRC-32 table, byte 0 (LSB)
 ZM_T1		= $0500
 ZM_T2		= crclo
@@ -113,6 +115,9 @@ ST_RDTMO	= $02	; STATUS: read timeout
 ST_EOI		= $40	; STATUS: end of file
 ZM_RDTRY	= 8	; zs_read: give up after this many timeouts
 ZM_TALKTRY	= 3	; of them: talk again; then open the file again
+.ifndef ZM_PACE
+ZM_PACE		= 1	; 1: read the file only when the receiver has ACKed all
+.endif			; that was sent (ZCRCW at the end of each buffer)
 .ifndef ZM_SETTLE
 ZM_SETTLE	= 2	; jiffy ticks to wait before reading the drive
 .endif
@@ -1486,6 +1491,9 @@ zs_close:
 ; send from zm_pos on
 zs_data:
 	jsr zs_seek
+.if ZM_PACE
+	jsr zs_need	; read before the header goes out
+.endif
 	jsr zm_pos2txh
 	lda #ZDATA
 	jsr zm_sbin
@@ -1496,6 +1504,10 @@ zs_data:
 	lda #ZCRCE
 	bit zm_last	; the end of the file
 	bmi @send
+.if ZM_PACE
+	jsr zs_bufend	; the buffer's last: wait for the ACK, then read,
+	bcs @w		; with everything sent and the line quiet (Punter
+.endif			; reads like that, the C64U's software IEC needs it)
 	lda zm_rflags	; receiver can't overlap disk and serial I/O?
 	and #CANOVIO
 	beq @w
@@ -1747,10 +1759,10 @@ zs_read:
 	jsr zs_test_tmo	; C=1: faked; STATUS set (and a byte read for 3)
 	bcs @got
 .endif
-	jsr getin
+	jsr chrin	; like Punter: CHRIN and READST
 @got:	ldy #0
 	sta (zm_ptr),y
-	lda status
+	jsr readst
 	and #ST_RDTMO	; the drive didn't send the byte in time
 	jne @tmo	; (seen on the C64U's software IEC)
 	inc zm_ptr
@@ -1759,7 +1771,7 @@ zs_read:
 :	inc zm_blen
 	bne :+
 	inc zm_blen+1
-:	lda status
+:	jsr readst
 	bne @st
 	lda zm_blen
 	cmp zm_lim
@@ -2086,24 +2098,9 @@ zs_test_tmo:
 
 ; zm_ptr/zm_n = the next subpacket at zm_pos; reads the file as needed
 zs_fill:
+	jsr zs_need
 	jsr zs_dist	; offset into the buffer (< 64K after zs_seek)
-	lda zm_tmp
-	cmp zm_blen
-	bne @have
-	lda zm_tmp+1
-	cmp zm_blen+1
-	bne @have
-	; all sent: read on
-	jsr zs_drop
-	lda #0
-	sta zm_tmp
-	sta zm_tmp+1
-	bit zm_eof
-	bmi @have	; nothing left (n = 0)
-	lda #<ZM_TXBLK
-	ldx #>ZM_TXBLK
-	jsr zs_read
-@have:	lda #<ZM_BUF
+	lda #<ZM_BUF
 	clc
 	adc zm_tmp
 	sta zm_ptr
@@ -2144,6 +2141,47 @@ zs_fill:
 	lda #$80
 	sta zm_last
 @rts:	rts
+
+; all of the buffer sent (zm_pos at its end): read on
+zs_need:
+	jsr zs_dist
+	lda zm_tmp
+	cmp zm_blen
+	bne @rts
+	lda zm_tmp+1
+	cmp zm_blen+1
+	bne @rts
+	jsr zs_drop
+	bit zm_eof
+	bmi @rts	; nothing left (n = 0)
+	lda #<ZM_TXBLK
+	ldx #>ZM_TXBLK
+	jmp zs_read
+@rts:	rts
+
+; C=1 if the subpacket at zm_ptr/zm_n empties the buffer
+zs_bufend:
+	lda #<ZM_BUF	; zm_tmp+2/3 = the buffer's end
+	clc
+	adc zm_blen
+	sta zm_tmp+2
+	lda #>ZM_BUF
+	adc zm_blen+1
+	sta zm_tmp+3
+	lda zm_ptr
+	clc
+	adc zm_n
+	tax
+	lda zm_ptr+1
+	adc zm_n+1
+	cpx zm_tmp+2
+	bne @no
+	cmp zm_tmp+3
+	bne @no
+	sec
+	rts
+@no:	clc
+	rts
 
 ;----------------------------------------------------------------------
 ; send zm_n bytes at zm_ptr as a data subpacket ending with frame end A
