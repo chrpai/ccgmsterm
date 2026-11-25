@@ -15,6 +15,7 @@
 ; symbols required by rs232lib
 .export modem_type, baud_rate, is_pal_system	; modem settings
 .export telnet_iac, is_ultimate			; telnet IAC on Ultimate
+.export telnet_term_type			; telnet TERMINAL-TYPE name
 .import net_detect, net_available		; Ultimate Net modem type
 .export ribuf, revtabup				; buffer, temp storage
 

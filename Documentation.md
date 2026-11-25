@@ -256,6 +256,8 @@ Private and unknown sequences (`ESC [ ? 7 h`, `ESC [ ? 25 l`, ...) and ANSI musi
 
 Keys: the cursor keys send `ESC [ A`-`D`, HOME sends `ESC [ H`, CLR (`SHIFT` `HOME`) sends `ESC [ K` (End), INST sends `ESC [ @`, DEL sends backspace (8), and `CTRL` `:` sends ESC. The function keys stay CCGMS commands.
 
+With telnet IAC handling on (Ultimate), ANSI 80 accepts the telnet TERMINAL-TYPE option and reports `ANSI`, so BBSes that ask can detect ANSI without a prompt. The other modes refuse the option, as before.
+
 The buffer stores the raw bytes in this mode. Saving such a buffer adds `.ans` to the file name, loading a `.ans` file marks the buffer as ANSI, and viewing an ANSI buffer switches to ANSI 80 and plays it through the ANSI parser.
 
 Blinking text blinks about three times a second while the terminal waits for input. Like the colors, blinking is per cell, so a blinking character can make its neighbor blink too. (`a80_ice` in `src/ansi80.s` switches blink to a bright background instead, for "iCE color" art; there is no menu option for it yet.)
