@@ -65,6 +65,7 @@ next_line:
 	.include "xmodem.s"
 	.include "zmodem.s"
 	.include "xfer.s"
+	.include "upcache.s"
 	.include "disk.s"
 	.include "outstr.s"
 	.include "multixfer.s"

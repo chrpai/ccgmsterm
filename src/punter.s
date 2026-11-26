@@ -683,14 +683,13 @@ create_data_block:
 	sta (bufptr),y	; hi
 	jsr rs232_off
 
-	; read data from file into block
-	ldx #LFN_FILE
-	jsr chkin
+	; read data from file into block (from the REU if upc_fill put it there)
+	jsr upc_chkin
 	ldy #POS_PAYLOAD
-:	jsr chrin
+:	jsr upc_chrin
 	sta (bufptr),y
 	iny
-	jsr readst
+	jsr upc_readst
 	bne @eof	; EOF or error
 	cpy maxsize
 	bne :-

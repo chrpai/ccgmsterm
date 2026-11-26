@@ -336,6 +336,7 @@ uplok:
 	jmp xmodem_upload
 
 :	; PUNTER
+	jsr upc_fill	; with an REU: the whole file there first
 	jsr rs232_clear
 	jsr punter_reset
 	jsr punter_trantype; transmit file type header
@@ -351,6 +352,8 @@ uplok:
 	sta maxsize
 	jsr punter_transmit; transmit file contents
 xfrend:
+	lda #0
+	sta upc_on
 	jsr rs232_off
 	lda #LFN_FILE
 	jsr close
