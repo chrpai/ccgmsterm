@@ -4,6 +4,7 @@
 ; REU banks 1 and up before the transfer starts, and then takes its
 ; blocks from there.
 ;
+; XMODEM uploads use it the same way (upc_getin).
 ; Why: on the C64U (hyperkernal, Ultimate Net at 64 MHz) a disk read that
 ; follows network traffic, with a pause, times out (ST 66). Reading the
 ; file straight through works. Without an REU, or if the file doesn't
@@ -183,6 +184,17 @@ upc_chrin:
 	pla
 	tay
 	lda upc_byte
+	rts
+
+upc_getin:	; for XMODEM: GETIN, with the cache's status in STATUS
+	bit upc_on
+	bmi :+
+	jmp getin
+:	jsr upc_chrin
+	pha
+	lda upc_st
+	sta status
+	pla
 	rts
 
 upc_readst:

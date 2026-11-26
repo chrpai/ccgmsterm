@@ -331,6 +331,7 @@ uplok:
 	lda protoc
 	beq :+		; PROTOCOL_PUNTER
 	; XMODEM
+	jsr upc_fill	; with an REU: the whole file there first
 	jsr crctable
 	jsr margin
 	jmp xmodem_upload

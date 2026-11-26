@@ -142,16 +142,15 @@ xmodem_send:
 
 	jsr rs232_off
 
-; read block into buffer
-	ldx #LFN_FILE
-	jsr chkin
+; read block into buffer (from the REU if upc_fill put it there)
+	jsr upc_chkin
 
 	lda pagectr
 	sta tmppagectr
 	jsr crcinit
 
 	ldy #0
-@snd2:	jsr getin	; read from file
+@snd2:	jsr upc_getin	; read from file
 	ldx status
 	stx xmoend	; set EOT flag if end of file (or error)
 @snd3:	jsr store_byte
