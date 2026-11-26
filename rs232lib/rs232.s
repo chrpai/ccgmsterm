@@ -112,6 +112,12 @@ rs232_off:
 	tya
 	pha
 	jsr func_disable
+	; Disk access follows. rs232_get leaves STATUS 1 when no byte came,
+	; and with a nonzero STATUS the KERNAL's CHRIN returns CR from the
+	; drive without reading (a Punter upload ended after a block or
+	; two); a replacement KERNAL may also fail the TALK.
+	lda #0
+	sta STATUS
 xferout:
 	pla
 	tay
