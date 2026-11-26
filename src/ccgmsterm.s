@@ -27,7 +27,7 @@
 .export locat, nlocat   ; for 80col
 .export ansi80_active, ansi80_bsout
 
-.define VERSION "0.4.0"
+.define VERSION "0.5.0"
 
 	.include "declare.inc"
 	.include "encoding.inc"
