@@ -9,6 +9,29 @@
 
 ![](ccgms_40.png) ![](ccgms_80.png)
 
+## For C64 Ultimate users, this is what you get
+
+If you have a C64 Ultimate (or an Ultimate 64 / Ultimate II+), CCGMS Future finds it on its own and lets you call BBSes over your network. No modem, no WiFi cartridge. Just turn on **Command Interface** in the Ultimate menu first.
+
+![CCGMS Future 0.5.0 main screen](docs/images/ccgmsterm.png)
+
+* **Call BBSes over the internet.** Pick the **Ultimate Net** modem type and dial `ATDT host:port`.
+* **Fast.** 57600 baud, quick screen drawing, and file transfers that keep up even with the CPU at 64 MHz.
+* **ZMODEM downloads and uploads**, and a broken download picks up where it left off.
+* **PC-style ANSI art** in an 80-column mode, as well as classic PETSCII art.
+* **Telnet that just works**, so binary file transfers don't get garbled.
+* **Fast Punter** and XMODEM for BBSes that use them.
+
+![Dialer settings: 57600 baud, Ultimate Net, ZMODEM](docs/images/params.png)
+
+![A 38 MB ZMODEM download resuming](docs/images/zmodem.png)
+
+![PETSCII art on The Golden Temple BBS](docs/images/ansii.png)
+
+![Wheel of Fortune on The Golden Temple BBS](docs/images/wof.png)
+
+**Tip:** Turn on an REU in the Ultimate's cartridge settings before you upload files. With Ultimate Net, uploads need it to be reliable. It also gives you a bigger 64 KB buffer.
+
 ## Features
 
 * 40 column color mode
@@ -25,6 +48,7 @@
 * File transfer protocols:
 	* Punter, Multi-Punter (about 16,800 CPS over Ultimate Net at 64 MHz 🔴)
 	* XMODEM, XMODEM-CRC, XMODEM-1K 🔴
+	* ZMODEM download and upload, with resume of interrupted downloads 🔴
 * Phone book with 30 entries and auto-dialer
 * Configuration & phone book load/save (disk or EasyFlash)
 * DOS command and directory
@@ -41,7 +65,7 @@
 
 * [RR-Net support](https://github.com/mist64/ccgmsterm/issues/1)
 * [WiC64 support](https://github.com/mist64/ccgmsterm/issues/3)
-* [YMODEM](https://github.com/mist64/ccgmsterm/issues/15)/ZMODEM/HMODEM protocols
+* [YMODEM](https://github.com/mist64/ccgmsterm/issues/15)/HMODEM protocols
 * IDE64 compatibility
 * Additional cartridges (e.g. Lt. Kernal)
 * 100% support for [hardware acceleration devices](https://github.com/mist64/ccgmsterm/issues/14) (SuperCPU etc). Punter now uses real-time timeouts and works at 64 MHz on an Ultimate, but XMODEM has not had the same pass.
