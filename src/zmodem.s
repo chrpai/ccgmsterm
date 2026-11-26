@@ -115,6 +115,9 @@ ST_RDTMO	= $02	; STATUS: read timeout
 ST_EOI		= $40	; STATUS: end of file
 ZM_RDTRY	= 8	; zs_read: give up after this many timeouts
 ZM_TALKTRY	= 3	; of them: talk again; then open the file again
+.ifndef ZM_RDTEST
+ZM_RDTEST	= 0	; 1: F1 in ZMODEM mode runs a disk read test (zm_rdtest)
+.endif
 .ifndef ZM_PACE
 ZM_PACE		= 1	; 1: read the file only when the receiver has ACKed all
 .endif			; that was sent (ZCRCW at the end of each buffer)
@@ -184,6 +187,9 @@ zm_upload_single:
 	sta mulfil+19
 	lda #1
 	sta mulfln
+.if ZM_RDTEST
+	jmp zm_rdtest
+.endif
 ;----------------------------------------------------------------------
 ; C= F1: mulfil holds the files picked by select_files_from_disk,
 ; mulfln their number
@@ -235,6 +241,198 @@ zm_begin:
 	jsr ercopn	; command channel
 	jsr clrchn
 	jmp rs232_on
+
+
+.if ZM_RDTEST
+;----------------------------------------------------------------------
+; Disk read test instead of an upload (ZM_RDTEST=1): read the file in
+; ZM_TXBLK chunks, three times: 0 with the modem driver off throughout,
+; 1 polling the modem 8 times between chunks, 2 polling 64 times.
+; Per pass: total bytes, final ST, chunks; and the first short chunk:
+; its number, bytes and ST.
+zm_rdtest:
+	lda #0
+	jsr zm_begin
+	tsx
+	stx zm_sp
+	ldy #17		; name from mulfil, without the $A0 padding
+:	lda mulfil,y
+	cmp #$a0
+	bne :+
+	dey
+	cpy #1
+	bne :-
+:	dey
+	sty zm_nlen
+	ldx #0
+:	lda mulfil+2,x
+	sta zm_name,x
+	inx
+	cpx zm_nlen
+	bne :-
+	lda #ZM_PROBE
+	sta zm_ftype
+	lda #0
+	sta zm_nstart	; pass
+@pass:	jsr zs_close
+	jsr zs_open
+	bcc :+
+	jmp zm_cant_open
+:	lda #0
+	ldx #3
+:	sta zm_size,x	; total
+	dex
+	bpl :-
+	sta zm_numb	; chunks
+	sta zm_nend	; first short chunk (0: none)
+@chunk:	lda zm_nstart
+	beq @read
+	jsr rs232_on
+	ldx #8
+	lda zm_nstart
+	cmp #1
+	beq :+
+	ldx #64
+:	stx zm_i
+:	jsr rs232_get	; (drops what comes)
+	dec zm_i
+	bne :-
+@read:	jsr rs232_off
+	ldx #LFN_FILE
+	jsr chkin
+	lda #0
+	sta status
+	sta zm_n
+	sta zm_n+1
+@byte:	jsr chrin
+	jsr readst
+	bne @got
+	inc zm_n
+	bne :+
+	inc zm_n+1
+:	lda zm_n
+	cmp #<ZM_TXBLK
+	bne @byte
+	lda zm_n+1
+	cmp #>ZM_TXBLK
+	bne @byte
+	lda #0
+@got:	sta zm_chk	; ST
+	beq :+
+	inc zm_n	; the byte that came with ST $40 counts
+	bne :+
+	inc zm_n+1
+:	jsr clrchn
+	inc zm_numb
+	lda zm_n	; total += n
+	clc
+	adc zm_size
+	sta zm_size
+	lda zm_n+1
+	adc zm_size+1
+	sta zm_size+1
+	bcc :+
+	inc zm_size+2
+:	lda zm_nend
+	bne :+
+	lda zm_n
+	cmp #<ZM_TXBLK
+	bne @short
+	lda zm_n+1
+	cmp #>ZM_TXBLK
+	beq :+
+@short:	lda zm_numb
+	sta zm_nend
+	lda zm_n
+	sta zm_rbl
+	lda zm_n+1
+	sta zm_rbl+1
+	lda zm_chk
+	sta zm_rflags
+:	lda zm_chk
+	jeq @chunk
+	jsr rs232_on
+	; "P0 N=16402 ST=64 C=22 S=22,274,64"
+	ldx zm_nstart
+	inx
+	ldy #0
+	jsr zm_at
+	lda #'P'
+	jsr chrout
+	lda zm_nstart
+	jsr @num8
+	lda #<@tn
+	ldy #>@tn
+	jsr outstr
+	ldx #3
+:	lda zm_size,x
+	sta zm_num,x
+	dex
+	bpl :-
+	jsr zm_pnum
+	lda #<@tst
+	ldy #>@tst
+	jsr outstr
+	lda zm_chk
+	jsr @num8
+	lda #<@tc
+	ldy #>@tc
+	jsr outstr
+	lda zm_numb
+	jsr @num8
+	lda #<@ts
+	ldy #>@ts
+	jsr outstr
+	lda zm_nend
+	jsr @num8
+	lda #','
+	jsr chrout
+	lda zm_rbl
+	sta zm_num
+	lda zm_rbl+1
+	sta zm_num+1
+	lda #0
+	sta zm_num+2
+	sta zm_num+3
+	jsr zm_pnum
+	lda #','
+	jsr chrout
+	lda zm_rflags
+	jsr @num8
+	inc zm_nstart
+	lda zm_nstart
+	cmp #3
+	jcc @pass
+	jsr zs_close
+	ldx #5
+	ldy #0
+	jsr zm_at
+	lda #<@tkey
+	ldy #>@tkey
+	jsr outstr
+	jsr clrchn
+	lda #0
+	sta $c6		; empty the keyboard buffer
+:	jsr getin
+	beq :-
+	lda #<@tdone
+	ldy #>@tdone
+	jmp zm_fail
+@num8:	sta zm_num
+	lda #0
+	sta zm_num+1
+	sta zm_num+2
+	sta zm_num+3
+	jmp zm_pnum
+SET_PETSCII
+@tn:	.byte " n=",0
+@tst:	.byte " st=",0
+@tc:	.byte " c=",0
+@ts:	.byte " s=",0
+@tdone:	.byte "Read test done",0
+@tkey:	.byte "Photo, then press a key.",0
+SET_ASCII
+.endif
 
 ;----------------------------------------------------------------------
 zm_screen:
