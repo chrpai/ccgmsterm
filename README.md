@@ -48,6 +48,7 @@ If you have a C64 Ultimate (or an Ultimate 64 / Ultimate II+), CCGMS Future find
 * File transfer protocols:
 	* Punter, Multi-Punter (about 16,800 CPS over Ultimate Net at 64 MHz 🔴)
 	* XMODEM, XMODEM-CRC, XMODEM-1K 🔴
+	* ZMODEM download and upload, with resume of interrupted downloads 🔴
 * Phone book with 30 entries and auto-dialer
 * Configuration & phone book load/save (disk or EasyFlash)
 * DOS command and directory
@@ -64,7 +65,7 @@ If you have a C64 Ultimate (or an Ultimate 64 / Ultimate II+), CCGMS Future find
 
 * [RR-Net support](https://github.com/mist64/ccgmsterm/issues/1)
 * [WiC64 support](https://github.com/mist64/ccgmsterm/issues/3)
-* [YMODEM](https://github.com/mist64/ccgmsterm/issues/15)/ZMODEM/HMODEM protocols
+* [YMODEM](https://github.com/mist64/ccgmsterm/issues/15)/HMODEM protocols
 * IDE64 compatibility
 * Additional cartridges (e.g. Lt. Kernal)
 * 100% support for [hardware acceleration devices](https://github.com/mist64/ccgmsterm/issues/14) (SuperCPU etc). Punter now uses real-time timeouts and works at 64 MHz on an Ultimate, but XMODEM has not had the same pass.
