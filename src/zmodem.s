@@ -1511,12 +1511,17 @@ zs_file:
 	dex
 	bpl :-
 	jsr zm_show_bytes
+	lda #0
+	sta upc_on
 	jsr zs_open
 	bcc :+
 	jmp zm_cant_open
 :	jsr zs_close	; the type is known now: look up the size
 	jsr zs_blocks
 	jsr zs_open
+	bcc :+
+	jmp zm_cant_open
+:	jsr zs_cache	; with an REU, the whole file there first
 	bcc :+
 	jmp zm_cant_open
 :	jsr zs_info
@@ -1695,6 +1700,24 @@ zs_open1:
 :	clc
 	rts
 
+; With an REU, read the whole open file into it and close the file
+; (upcache.s). On the C64U a disk read that follows network traffic and
+; a pause times out; read straight through, before the transfer, it
+; works. Without an REU the file stays open. C=1: the file can't be
+; opened again after a failed read.
+zs_cache:
+	jsr upc_load	; (driver off while it reads)
+	bcc @ok
+	jsr rs232_on
+	lda upc_fail
+	beq @disk	; no REU or too small: file still open
+	lda #0		; read error: upc_load closed it
+	sta zm_fopen
+	jmp zs_open
+@ok:	jsr zs_close	; (driver on again)
+@disk:	clc
+	rts
+
 zs_close:
 	lda zm_fopen
 	beq :+
@@ -1725,8 +1748,11 @@ zs_data:
 	bit zm_last	; the end of the file
 	bmi @send
 .if ZM_PACE
+	bit upc_on	; (from the REU: no disk read to wait for)
+	bmi :+
 	jsr zs_bufend	; the buffer's last: wait for the ACK, then read,
-	bcs @w		; with everything sent and the line quiet (Punter
+	bcs @w
+:		; with everything sent and the line quiet (Punter
 .endif			; reads like that, the C64U's software IEC needs it)
 	lda zm_rflags	; receiver can't overlap disk and serial I/O?
 	and #CANOVIO
@@ -1864,17 +1890,20 @@ zs_seek:
 	lda zm_pos+3
 	sbc zm_bpos+3
 	bcs @fwd
+	bit upc_on
+	bmi @zero	; from the REU: just start at 0
 	jsr zs_close
 	jsr zs_open
-	bcc :+
+	bcc @zero
 	jsr zm_dosline
 	jsr zm_canit
 	lda #<zt_cant_open
 	ldy #>zt_cant_open
 	jmp zm_fail
-:	lda #0
+@zero:	lda #0
 	sta zm_blen
 	sta zm_blen+1
+	sta zm_eof
 	ldx #3
 :	sta zm_bpos,x
 	dex
@@ -1962,7 +1991,19 @@ zs_drop:
 zs_read:
 	sta zm_lim
 	stx zm_lim+1
-	lda #0
+	bit upc_on
+	bpl @disk
+	jsr upc_get	; from the REU: A/X bytes at zm_bpos
+	sta zm_blen
+	stx zm_blen+1
+	cmp zm_lim	; fewer than asked: the end of the file
+	txa
+	sbc zm_lim+1
+	bcs :+
+	lda #$80
+	sta zm_eof
+:	rts
+@disk:	lda #0
 	sta zm_rtry
 	jsr rs232_off
 	jsr zm_settle

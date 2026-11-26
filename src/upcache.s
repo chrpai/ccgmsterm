@@ -12,9 +12,22 @@
 UPC_BOUNCE	= xmodem_buffer	; 256 bytes, unused by a Punter upload
 
 ;----------------------------------------------------------------------
-; LFN_FILE is open for reading. C=0: the file is in the REU (upc_on)
+; LFN_FILE is open for reading. C=0: the file is in the REU (upc_on).
+; C=1: it isn't, and LFN_FILE is open again at the start (filtes).
 upc_fill:
+	jsr upc_load
+	bcc @rts
+	lda upc_fail
+	beq @c		; no REU: the file is still open
+	jsr filtes
+@c:	sec
+@rts:	rts
+
+; the same, but on C=1 LFN_FILE is closed if the read failed (ZMODEM
+; opens it again itself); upc_fail is then nonzero
+upc_load:
 	lda #0
+	sta upc_fail
 	sta upc_on
 	lda reu_enabled
 	beq @no
@@ -57,9 +70,9 @@ upc_fill:
 	clc
 	rts
 @fail:	jsr clrchn
-	lda #LFN_FILE	; open it again: the disk path reads it from the start
+	lda #LFN_FILE	; the disk path reads it again from the start
 	jsr close
-	jsr filtes
+	inc upc_fail
 @no:	sec
 	rts
 
@@ -180,6 +193,55 @@ upc_readst:
 	rts
 
 ;----------------------------------------------------------------------
+; ZMODEM: copy up to A/X bytes from REU file position zm_bpos (< 16 MB)
+; to ZM_BUF; returns the count in A/X (0 at the end of the file)
+upc_get:
+	sta upc_l
+	stx upc_l+1
+	lda upc_len	; left = len - pos
+	sec
+	sbc zm_bpos
+	sta upc_r
+	lda upc_len+1
+	sbc zm_bpos+1
+	sta upc_r+1
+	lda upc_len+2
+	sbc zm_bpos+2
+	bcc @none	; past the end
+	bne @dma	; 64 KB or more left
+	lda upc_r	; min(left, count)
+	cmp upc_l
+	lda upc_r+1
+	sbc upc_l+1
+	bcs @dma
+	lda upc_r
+	sta upc_l
+	lda upc_r+1
+	sta upc_l+1
+@dma:	lda upc_l
+	ora upc_l+1
+	beq @none
+	lda #<ZM_BUF
+	sta upc_c
+	lda #>ZM_BUF
+	sta upc_c+1
+	lda zm_bpos
+	sta upc_r
+	lda zm_bpos+1
+	sta upc_r+1
+	ldx zm_bpos+2
+	inx
+	stx upc_r+2
+	lda #$b1	; REU -> C64
+	jsr upc_dma
+	lda upc_l
+	ldx upc_l+1
+	rts
+@none:	lda #0
+	tax
+	rts
+
+;----------------------------------------------------------------------
 ; REU DMA: C64 upc_c, REU upc_r (3 bytes), length upc_l; A = command
 upc_dma:
 	pha
@@ -264,6 +326,7 @@ upc_size:
 	jmp upc_dma
 
 upc_on:		.byte 0	; bit 7: reading from the REU
+upc_fail:	.byte 0
 upc_banks:	.byte 0
 upc_len:	.res 3
 upc_pos:	.res 3
