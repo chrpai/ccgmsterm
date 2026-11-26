@@ -142,16 +142,15 @@ xmodem_send:
 
 	jsr rs232_off
 
-; read block into buffer
-	ldx #LFN_FILE
-	jsr chkin
+; read block into buffer (from the REU if upc_fill put it there)
+	jsr upc_chkin
 
 	lda pagectr
 	sta tmppagectr
 	jsr crcinit
 
 	ldy #0
-@snd2:	jsr getin	; read from file
+@snd2:	jsr upc_getin	; read from file
 	ldx status
 	stx xmoend	; set EOT flag if end of file (or error)
 @snd3:	jsr store_byte
@@ -350,22 +349,43 @@ clear_input_buffer:
 modem_get_1:
 	lda #1
 ; get modem byte with timeout
+; A: timeout in units of about 10 s (600 jiffies). Counted on the
+; jiffy clock, not in loop passes: a pass count runs out far too soon
+; on a fast CPU (64 MHz on the C64U: the upload was cancelled at once).
 modem_get:
 	sta xmodel
-	lda #0
+	lda #0		; rtca1/rtca2 = A * 600
 	sta rtca1
 	sta rtca2
-	sta rtca0
-
+	ldx xmodel
+	beq @go
+:	lda rtca2
+	clc
+	adc #<600
+	sta rtca2
+	lda rtca1
+	adc #>600
+	sta rtca1
+	dex
+	bne :-
+@go:	lda $a2
+	sta rtca0	; last jiffy seen
 @1:	jsr rs232_get	; receive byte
 	bcs :+
 	ldx #0		; ok
 	rts
 :	jsr xchkcm	; check for keyboard abort
-	jsr xmmrtc
-	lda rtca0
-	cmp xmodel
-	bcc @1
+	lda $a2
+	cmp rtca0
+	beq @1
+	sta rtca0	; one jiffy more
+	lda rtca2
+	bne :+
+	dec rtca1
+:	dec rtca2
+	lda rtca2
+	ora rtca1
+	bne @1
 
 	; timeout
 	jsr clrchn
