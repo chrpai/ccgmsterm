@@ -1013,7 +1013,9 @@ zm_closef:
 ; open inpbuf (X chars) as LFN_FILE and read the drive status;
 ; Z=1 if it is "00". The file stays open either way.
 zm_openinp:
-	txa
+	stx zm_i
+	jsr read_drive_msg	; a message still unread from before
+	lda zm_i
 	ldx #<inpbuf
 	ldy #>inpbuf
 	jsr setnam

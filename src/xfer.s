@@ -230,11 +230,7 @@ handle_f1_upload:
 uplmen:
 	jsr filtes
 	beq uplfil
-	pha
-	ldx #LFN_DISK_CMD
-	jsr chkin
-	pla
-	jmp drver3
+	jmp show_drive_msg
 uplfil:	ldy max
 	ldx #3
 :	lda upltyp,x
@@ -259,19 +255,73 @@ filtes:
 	ldy #0
 	jsr setlfs
 filopn:
+	lda $b8		; (CHKIN sets these: keep what SETLFS set)
+	pha
+	lda $b9
+	pha
+	lda $ba
+	pha
+	jsr read_drive_msg	; a message still unread from before
+	pla
+	sta $ba
+	pla
+	sta $b9
+	pla
+	sta $b8
 	jsr open
-	ldx #LFN_DISK_CMD
-	jsr chkin
-	jsr getin
+	jsr read_drive_msg
 	cmp #'0'
 	beq :+
-	php
 	pha
 	lda #LFN_FILE
 	jsr close
 	pla
-	plp
+	cmp #'0'	; Z=0
 :	rts
+
+;----------------------------------------------------------------------
+; Read the drive's whole status line into drive_msg; A = its first char.
+; Reading only the first char (as this did) leaves the rest in the
+; drive, and the C64U's software IEC then gives the old rest for the
+; next command: a file that is there is "not found", or an upload picks
+; the wrong type, and the error shown is cut ("ILE NOT FOUND").
+read_drive_msg:
+	ldy #0
+	sty drive_msg
+	ldx #LFN_DISK_CMD
+	jsr chkin
+	bcs @end	; no drive: channel 15 isn't open
+@loop:	lda #0		; a stale STATUS makes the KERNAL return CR
+	sta status
+	jsr getin
+	cmp #CR
+	beq @end
+	sta drive_msg,y
+	iny
+	lda status
+	bne @end
+	cpy #DRIVE_MSG_MAX
+	bcc @loop
+@end:	lda #0
+	sta drive_msg,y
+	jsr clrchn
+	lda drive_msg
+	rts
+
+; print drive_msg and go back to the terminal
+show_drive_msg:
+	lda #<drive_msg
+	ldy #>drive_msg
+	jsr outstr
+	lda #CR
+	jsr chrout
+	jsr clrchn
+	jsr col80_wait
+	jmp drvext
+
+DRIVE_MSG_MAX = 40
+drive_msg:
+	.res DRIVE_MSG_MAX+1
 
 ;----------------------------------------------------------------------
 uplok:
@@ -426,11 +476,7 @@ dowsfn:
 dowopn:
 	jsr filopn
 	beq :+
-	pha
-	ldx #LFN_DISK_CMD
-	jsr chkin
-	pla
-	jmp drver3
+	jmp show_drive_msg
 
 :	lda protoc
 	beq :+		; PROTOCOL_PUNTER
