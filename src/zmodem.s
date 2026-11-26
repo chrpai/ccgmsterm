@@ -246,8 +246,9 @@ zm_begin:
 .if ZM_RDTEST
 ;----------------------------------------------------------------------
 ; Disk read test instead of an upload (ZM_RDTEST=1): read the file in
-; ZM_TXBLK chunks, three times: 0 with the modem driver off throughout,
-; 1 polling the modem 8 times between chunks, 2 polling 64 times.
+; ZM_TXBLK chunks, five times; between chunks: 0 driver off throughout,
+; 1 driver on and off, 2 one modem poll, 3 one poll and a wait of 30
+; jiffies after the driver goes off, 4 the same wait before it.
 ; Per pass: total bytes, final ST, chunks; and the first short chunk:
 ; its number, bytes and ST.
 zm_rdtest:
@@ -285,19 +286,24 @@ zm_rdtest:
 	bpl :-
 	sta zm_numb	; chunks
 	sta zm_nend	; first short chunk (0: none)
-@chunk:	lda zm_nstart
-	beq @read
+@chunk:	lda zm_nstart	; 0: driver off throughout
+	beq @rd0
 	jsr rs232_on
-	ldx #8
 	lda zm_nstart
 	cmp #1
-	beq :+
-	ldx #64
-:	stx zm_i
-:	jsr rs232_get	; (drops what comes)
-	dec zm_i
-	bne :-
-@read:	jsr rs232_off
+	beq @off	; 1: driver on and off, no poll
+	jsr rs232_get	; 2-4: one poll (drops what comes)
+	lda zm_nstart
+	cmp #4
+	bne @off
+	jsr @wait	; 4: wait before the driver goes off
+@off:	jsr rs232_off
+	lda zm_nstart
+	cmp #3
+	bne @rd0
+	jsr @wait	; 3: wait after it went off
+@rd0:	lda $df1c	; UCI status before the read
+	sta zm_e
 	ldx #LFN_FILE
 	jsr chkin
 	lda #0
@@ -349,6 +355,8 @@ zm_rdtest:
 	sta zm_rbl+1
 	lda zm_chk
 	sta zm_rflags
+	lda zm_e
+	sta zm_e2
 :	lda zm_chk
 	jeq @chunk
 	jsr rs232_on
@@ -399,12 +407,17 @@ zm_rdtest:
 	jsr chrout
 	lda zm_rflags
 	jsr @num8
+	lda #<@tu
+	ldy #>@tu
+	jsr outstr
+	lda zm_e2
+	jsr @num8
 	inc zm_nstart
 	lda zm_nstart
-	cmp #3
+	cmp #5
 	jcc @pass
 	jsr zs_close
-	ldx #5
+	ldx #7
 	ldy #0
 	jsr zm_at
 	lda #<@tkey
@@ -418,6 +431,12 @@ zm_rdtest:
 	lda #<@tdone
 	ldy #>@tdone
 	jmp zm_fail
+@wait:	lda $a2	; 30 jiffies
+	clc
+	adc #30
+:	cmp $a2
+	bne :-
+	rts
 @num8:	sta zm_num
 	lda #0
 	sta zm_num+1
@@ -429,6 +448,7 @@ SET_PETSCII
 @tst:	.byte " st=",0
 @tc:	.byte " c=",0
 @ts:	.byte " s=",0
+@tu:	.byte " u=",0
 @tdone:	.byte "Read test done",0
 @tkey:	.byte "Photo, then press a key.",0
 SET_ASCII
