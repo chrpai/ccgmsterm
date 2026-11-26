@@ -26,6 +26,8 @@
 
 `F1` will upload a single file from current drive to the BBS. It will ask for the source filename. With ZMODEM, the name is sent along.
 
+With an REU, every upload (Punter, XMODEM and ZMODEM) first reads the whole file into the REU, before any data goes to the BBS, and then sends it from there. This is faster, and it is needed on the C64 Ultimate with Ultimate Net: there, a disk read that comes after network traffic and a short pause can time out, so an upload that reads the disk between blocks stops after a block or two. Without an REU, or if the file doesn't fit in it, the upload reads the disk as it goes.
+
 ## Send/Read File
 
 `F2` will ask whether you want to send (`S`) or read (`R`) a file.
@@ -53,6 +55,8 @@
 * **View**: This prints the buffer contents to the screen. During printing, STOP cancels, and any other key pauses/unpauses.
 
 In addition, `<` and `>` will move the buffer pointer.
+
+With an REU, the buffer is 64 KB in the REU. Without one, it is in main memory and holds about 7 KB (about 14 KB in version 0.4.0); the ZMODEM code takes the rest.
 
 The RETURN key will exit the buffer menu.
 
@@ -188,6 +192,7 @@ This configures the protocol to be used for file transmissions. It cycles betwee
 	* XMODEM-1K:
 		* Upload: force 1K blocks, accept checksum or CRC
 		* Download: force CRC, accept 128B or 1K blocks
+	* XMODEM times its waits on the jiffy clock, so the timeouts are the same at any CPU speed.
 * ZMODEM: see [ZMODEM](#zmodem). A ZMODEM download starts by itself whatever protocol is selected.
 
 ### Theme
@@ -272,13 +277,15 @@ ZMODEM is the streaming protocol most PC-style and Amiga BBSes offer. CCGMS supp
 * Download and upload, one file or a batch, with the file names sent by the other side.
 * Auto-start: when the BBS starts a ZMODEM download (it sends `**`, CAN, `B00`), CCGMS switches to a 40 column status screen and starts receiving by itself, in any terminal mode and whatever protocol is selected. `F3` with ZMODEM selected also waits for the BBS to start.
 * CRC-16 and CRC-32. The sender chooses; CCGMS offers CRC-32.
-* Streaming. The sender streams without waiting for a reply after each block, but CCGMS asks it to wait for an acknowledgment every 1 KB. With SwiftLink and Ultimate Net, RS-232 flow control also holds the sender while CCGMS writes to disk. The 1 KB limit matters with a slow drive: a sender that streams the whole file fills the network buffers, runs far ahead of the drive, and can give up waiting for CCGMS to finish the file. Some senders ignore the limit; with `sz` from lrzsz, use `sz -w 2048` on slow drives. The user port drivers can't receive while CCGMS writes to disk; a sender that ignores the limit still works there, but more slowly, because CCGMS has it resend what was missed.
+* Streaming (downloads). The sender streams without waiting for a reply after each block, but CCGMS asks it to wait for an acknowledgment every 1 KB. With SwiftLink and Ultimate Net, RS-232 flow control also holds the sender while CCGMS writes to disk. The 1 KB limit matters with a slow drive: a sender that streams the whole file fills the network buffers, runs far ahead of the drive, and can give up waiting for CCGMS to finish the file. Some senders ignore the limit; with `sz` from lrzsz, use `sz -w 2048` on slow drives. The user port drivers can't receive while CCGMS writes to disk; a sender that ignores the limit still works there, but more slowly, because CCGMS has it resend what was missed.
 * Error recovery: a bad block makes CCGMS ask the sender to go back to the last good byte.
 * Resume: if a file with the same name exists and is shorter than the file offered, CCGMS appends the rest (crash recovery). If it is the same size or larger, CCGMS saves the new file under a numbered name such as `NAME-1`. It never overwrites a file.
 
 Received names are converted to PETSCII and cut to 16 characters. Files ending in `.prg` or `.d64` are saved as PRG, everything else as SEQ. Files are saved to the current drive.
 
-When uploading, CCGMS sends the file name in lower case, and adds `.prg` to PRG files whose name has no extension, so a PC can tell what they are. It does not send the file size, which it doesn't know without reading the whole file.
+When uploading, CCGMS sends the file name in lower case, and adds `.prg` to PRG files whose name has no extension, so a PC can tell what they are. It does not send the file size.
+
+Uploads stream too. With an REU (see [Upload File](#upload-file)), CCGMS sends the whole file from the REU without stopping. Without one, it reads the file in 768-byte pieces and, after each piece, waits for the receiver's acknowledgment before it reads the next, so that no data arrives while it reads the drive.
 
 `C=` cancels a transfer. If the disk is full or the drive reports an error, CCGMS cancels the transfer and shows the drive's message.
 
